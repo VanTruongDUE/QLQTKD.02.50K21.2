@@ -1,0 +1,23 @@
+{
+  "name": "starlight-cinema",
+  "private": true,
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @starlight/api --filter @starlight/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "db:migrate": "pnpm --filter @starlight/api db:migrate",
+    "db:seed": "pnpm --filter @starlight/api db:seed",
+    "test": "pnpm --filter @starlight/api test",
+    "test:e2e": "playwright test",
+    "lint": "oxlint apps packages",
+    "format": "prettier --write apps packages *.json *.yaml docs README.md"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "oxlint": "^1.0.0",
+    "prettier": "^3.6.0",
+    "typescript": "^5.9.3",
+    "@types/node": "^24.0.0"
+  }
+}

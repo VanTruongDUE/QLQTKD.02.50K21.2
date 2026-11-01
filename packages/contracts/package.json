@@ -1,0 +1,12 @@
+{
+  "name": "@starlight/contracts",
+  "private": true,
+  "main": "index.ts",
+  "types": "index.ts",
+  "dependencies": {
+    "zod": "^4.1.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit --strict --skipLibCheck --esModuleInterop index.ts"
+  }
+}

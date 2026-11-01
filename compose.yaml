@@ -1,0 +1,53 @@
+name: starlight
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: starlight
+      POSTGRES_PASSWORD: starlight_local
+      POSTGRES_DB: starlight
+    ports: ["127.0.0.1:54329:5432"]
+    volumes:
+      [
+        "postgres_data:/var/lib/postgresql/data",
+        "./infra/init-test-db.sql:/docker-entrypoint-initdb.d/01-test.sql:ro",
+      ]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U starlight"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports: ["127.0.0.1:1025:1025", "127.0.0.1:8025:8025"]
+  api:
+    profiles: [full]
+    build: { context: ., dockerfile: infra/Dockerfile }
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://starlight:starlight_local@postgres:5432/starlight
+      SMTP_HOST: mailpit
+    command:
+      ["sh", "-c", "pnpm db:migrate && pnpm --filter @starlight/api start"]
+    ports: ["127.0.0.1:4000:4000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+  worker:
+    profiles: [full]
+    build: { context: ., dockerfile: infra/Dockerfile }
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://starlight:starlight_local@postgres:5432/starlight
+      SMTP_HOST: mailpit
+    command: ["node", "apps/api/dist/worker.js"]
+    depends_on: [api, mailpit]
+  web:
+    profiles: [full]
+    build: { context: ., dockerfile: infra/Dockerfile }
+    environment:
+      API_INTERNAL_URL: http://api:4000
+    command: ["pnpm", "--filter", "@starlight/web", "start"]
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: [api]
+volumes:
+  postgres_data:
