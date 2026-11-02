@@ -186,3 +186,4 @@ Tài liệu này hướng dẫn chi tiết quy trình kết nối Backend NestJS
 2. **Kích hoạt chính thức**:
    - Sau khi email test đạt yêu cầu, bật công tắc **Inactive -> Active** ở góc trên bên phải giao diện n8n workflow.
    - Chuyển `N8N_WEBHOOK_URL` trong `.env` Backend từ `webhook-test` sang `webhook`.
+

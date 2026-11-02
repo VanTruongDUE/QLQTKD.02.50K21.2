@@ -104,3 +104,4 @@ Phát sinh khi nhân viên soát vé quét QR tại cửa vào phòng chiếu. S
 
 1. **Khả năng mở rộng**: Nhờ sử dụng cơ chế `FOR UPDATE SKIP LOCKED` trong PostgreSQL, nhiều worker có thể chạy song song mà không tranh chấp cùng một bản ghi thông báo.
 2. **Khả năng quan sát (Observability)**: Mọi nỗ lực gửi thông báo đều được ghi lại số lần thử (`attempts`) và lỗi chi tiết (`last_error`), giúp kỹ sư vận hành dễ dàng tra cứu qua bảng `notification_outbox` hoặc báo cáo quản trị.
+
