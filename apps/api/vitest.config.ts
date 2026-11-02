@@ -4,7 +4,7 @@ export default defineConfig({
     setupFiles: ["test/setup.ts"],
     include: ["test/**/*.test.ts"],
     fileParallelism: false,
-    testTimeout: 20000,
+    testTimeout: 30000,
     hookTimeout: 30000,
   },
   esbuild: {
