@@ -12,7 +12,10 @@ interface CheckInModuleProps {
 }
 
 export function CheckInModule({ tickets, activeTicketCode, onUpdateTicket }: CheckInModuleProps) {
-  const currentTicket = tickets.find((ticket) => ticket.bookingCode === activeTicketCode) || tickets[0] || null;
+  const active = tickets.find((ticket) => ticket.bookingCode === activeTicketCode) || null;
+  const usableTickets = tickets.filter((ticket) => ticket.status === "ELIGIBLE_REFUND" || ticket.status === "CHECKED_IN");
+  const currentTicket = active && usableTickets.includes(active) ? active : usableTickets[0] || null;
+  const blocked = active && !usableTickets.includes(active) ? active : null;
   return <div className="animate-subtle-step space-y-4">
     <div className="flex items-center gap-3 rounded-2xl border border-[#222538] bg-[#131520] p-4">
       <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-purple-500/30 bg-purple-950/60 text-pink-400"><Smartphone className="h-5 w-5" /></div>

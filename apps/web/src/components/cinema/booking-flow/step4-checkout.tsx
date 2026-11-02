@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   CreditCard,
   QrCode,
@@ -11,9 +11,11 @@ import {
   Award,
   Wallet,
   Loader2,
+  Mail,
 } from "lucide-react";
 import { Movie, Showtime, CinemaLocation, Seat } from "../types";
 import { FNB_ITEMS } from "../mock-data";
+import { useAuth } from "@/components/auth/auth-provider";
 
 interface Step4CheckoutProps {
   movie: Movie;
@@ -28,11 +30,13 @@ interface Step4CheckoutProps {
   onApplyPromo: (code: string) => void;
   usePoints: boolean;
   onTogglePoints: (use: boolean) => void;
-  onPaymentSuccess: () => void;
+  onPaymentSuccess: (bookingCode?: string) => void;
 }
 
 export function Step4Checkout({
   movie,
+  showtime,
+  cinema,
   selectedSeatIds,
   seats,
   u22TicketCount,
@@ -44,6 +48,16 @@ export function Step4Checkout({
   onTogglePoints,
   onPaymentSuccess,
 }: Step4CheckoutProps) {
+  const { profile } = useAuth();
+  const [email, setEmail] = useState("");
+  const [emailError, setEmailError] = useState("");
+
+  useEffect(() => {
+    if (profile?.email && !email) {
+      setEmail(profile.email);
+    }
+  }, [profile?.email]);
+
   const [selectedMethod, setSelectedMethod] = useState<
     "vnpay" | "momo" | "wallet" | "card"
   >("vnpay");
@@ -66,13 +80,59 @@ export function Step4Checkout({
     rawSeatTotal - u22DiscountTotal + fnbTotal - promoDiscount - pointsDiscount
   );
 
-  const handlePay = () => {
+  const handlePay = async () => {
     if (!isAgreedPolicy) return;
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !trimmedEmail.includes("@")) {
+      setEmailError("Vui lòng nhập địa chỉ email hợp lệ để nhận vé điện tử!");
+      return;
+    }
+    setEmailError("");
     setIsProcessing(true);
-    setTimeout(() => {
+    let confirmedCode: string | undefined;
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api/v1";
+      const combos = Object.entries(fnbQuantities)
+        .filter((entry) => entry[1] > 0)
+        .map(([id, quantity]) => {
+          const item = FNB_ITEMS.find((f) => f.id === id);
+          return {
+            name: item?.name || id,
+            quantity,
+            unitPrice: item?.price || 0,
+          };
+        });
+
+      const res = await fetch(`${apiUrl}/checkout/confirm`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          recipientEmail: trimmedEmail,
+          customerName: profile?.display_name || "Khách hàng",
+          movieTitle: movie.title,
+          cinemaName: cinema?.name || "Starlight Cinema",
+          roomName: showtime?.room || "Phòng Chiếu",
+          startsAt: showtime?.startsAt || new Date().toISOString(),
+          seats: selectedSeatIds,
+          combos,
+          total: computedTotal,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data.bookingId) {
+          confirmedCode = data.bookingId;
+        }
+      }
+    } catch (err) {
+      console.error("Booking confirmation error:", err);
+    } finally {
       setIsProcessing(false);
-      onPaymentSuccess();
-    }, 1200);
+      onPaymentSuccess(confirmedCode);
+    }
   };
 
   const paymentMethods = [
@@ -253,6 +313,40 @@ export function Step4Checkout({
             );
           })}
         </div>
+      </div>
+
+      {/* Recipient Email for E-ticket */}
+      <div className={`p-3.5 rounded-xl bg-[#131520] border ${emailError ? "border-rose-500/80 bg-rose-950/10" : "border-[#222538]"} text-xs transition-colors`}>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="text-[11px] font-semibold text-zinc-300 flex items-center gap-1.5">
+            <Mail className="w-3.5 h-3.5 text-purple-400" />
+            <span>Email nhận vé điện tử (E-ticket):</span>
+          </label>
+          <span className="text-[10px] text-amber-400 font-medium">Bắt buộc</span>
+        </div>
+        <div className="relative">
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (emailError) setEmailError("");
+            }}
+            placeholder="ví dụ: vantruongdkrqt@gmail.com"
+            className={`w-full px-3 py-2 rounded-lg bg-[#0e1017] border ${
+              emailError ? "border-rose-500 text-rose-200" : "border-[#272b3f] text-white"
+            } text-xs placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors`}
+          />
+        </div>
+        {emailError ? (
+          <p className="text-[11px] text-rose-400 font-medium mt-1.5 flex items-center gap-1">
+            <span>⚠️</span> {emailError}
+          </p>
+        ) : (
+          <p className="text-[10px] text-zinc-400 mt-1">
+            Hệ thống n8n sẽ tự động gửi vé xem phim và mã QR về hòm thư này ngay sau khi bấm thanh toán.
+          </p>
+        )}
       </div>
 
       {/* Policy Agreement Checkbox */}

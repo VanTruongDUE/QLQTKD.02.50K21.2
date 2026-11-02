@@ -96,7 +96,7 @@ export type Ticket = {
   popcornStatus: PopcornStatus;
   popcornCounter?: string;
   readyInMinutes?: number;
-  qrToken: string;
+  qrToken?: string;
   qrImage?: string;
   ageVerified?: boolean;
   checkedInAt?: string;

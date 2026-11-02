@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Calendar,
   Clock,
@@ -10,7 +10,7 @@ import {
   Film,
   Sparkles,
 } from "lucide-react";
-import { Movie, Showtime, CinemaLocation, AgeRating } from "../types";
+import { Movie, Showtime, CinemaLocation, AgeRating, MovieFormat } from "../types";
 import { MOVIES, SHOWTIMES } from "../mock-data";
 
 interface Step1ShowtimesProps {
@@ -109,12 +109,105 @@ export function Step1Showtimes({
   const [selectedFormat, setSelectedFormat] = useState("Tất cả");
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
 
+  // Dynamic Catalog State from PostgreSQL
+  const [movies, setMovies] = useState<Movie[]>(MOVIES);
+  const [showtimes, setShowtimes] = useState<Showtime[]>(SHOWTIMES);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadCatalog() {
+      try {
+        const [moviesRes, showtimesRes] = await Promise.all([
+          fetch("/api/v1/movies").catch(() => null),
+          fetch("/api/v1/showtimes").catch(() => null),
+        ]);
+
+        if (!isMounted) return;
+
+        if (moviesRes && moviesRes.ok) {
+          const rawMovies = await moviesRes.json();
+          if (Array.isArray(rawMovies) && rawMovies.length > 0) {
+            const mappedMovies: Movie[] = rawMovies.map((m: any) => {
+              const mockMatch = MOVIES.find(
+                (item) => item.title.toLowerCase().trim() === m.title.toLowerCase().trim()
+              );
+              return {
+                id: m.id,
+                title: m.title,
+                originalTitle: mockMatch?.originalTitle,
+                director: mockMatch?.director || "Đạo diễn Starlight",
+                cast: mockMatch?.cast || "Dàn diễn viên điện ảnh",
+                durationMinutes: m.duration_minutes || mockMatch?.durationMinutes || 110,
+                releaseDate: mockMatch?.releaseDate || "2026-10-30",
+                genres: mockMatch?.genres || ["Điện ảnh", "Hành động"],
+                ageRating: (m.rating || mockMatch?.ageRating || "P") as AgeRating,
+                ageWarning: mockMatch?.ageWarning || "Phim tiêu chuẩn rạp Starlight Cinema",
+                poster: m.poster || mockMatch?.poster || "https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&w=600&q=80",
+                backdrop: mockMatch?.backdrop,
+                synopsis: m.description || mockMatch?.synopsis || "",
+                formats: mockMatch?.formats || ["2D Phụ đề", "3D Dolby 7.1"],
+                trailerUrl: mockMatch?.trailerUrl,
+                ratingScore: mockMatch?.ratingScore || 9.0,
+                voteCount: mockMatch?.voteCount || 1000,
+              };
+            });
+            setMovies(mappedMovies);
+          }
+        }
+
+        if (showtimesRes && showtimesRes.ok) {
+          const rawShowtimes = await showtimesRes.json();
+          if (Array.isArray(rawShowtimes) && rawShowtimes.length > 0) {
+            const mappedShowtimes: Showtime[] = rawShowtimes.map((s: any) => {
+              const startDate = new Date(s.starts_at);
+              // UTC+7 Vietnam local time
+              const hours = String((startDate.getUTCHours() + 7) % 24).padStart(2, "0");
+              const minutes = String(startDate.getUTCMinutes()).padStart(2, "0");
+              const localDay = new Date(startDate.getTime() + 7 * 3600 * 1000);
+              const dateStr = localDay.toISOString().slice(0, 10);
+
+              const roomName = s.room || "Phòng 01 · Starlight VIP";
+              const format: MovieFormat = roomName.includes("3D")
+                ? "3D Dolby 7.1"
+                : roomName.includes("Lồng tiếng")
+                ? "2D Lồng tiếng"
+                : "2D Phụ đề";
+
+              return {
+                id: s.id,
+                movieId: s.movie_id,
+                cinemaId: s.cinema_id || cinema.id,
+                room: roomName,
+                format,
+                startsAt: `${hours}:${minutes}`,
+                dateStr,
+                priceRegular: s.price || 60000,
+                priceVip: Math.round((s.price || 60000) * 1.15),
+                priceCouple: (s.price || 60000) * 2,
+                totalSeats: 108,
+                availableSeats: 104,
+              };
+            });
+            setShowtimes(mappedShowtimes);
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to load catalog from API, using fallback:", err);
+      }
+    }
+
+    loadCatalog();
+    return () => {
+      isMounted = false;
+    };
+  }, [cinema.id]);
+
   // Group showtimes for the selected date & format
   const activePromo = DAY_PROMOS[selectedDate] || DAY_PROMOS["2026-11-02"];
 
   // Filter movies and showtimes strictly dynamically by selected date
-  const moviesWithShowtimes = MOVIES.map((movie) => {
-    const showtimesForDate = SHOWTIMES.filter(
+  const moviesWithShowtimes = movies.map((movie) => {
+    const showtimesForDate = showtimes.filter(
       (s) =>
         s.movieId === movie.id &&
         s.dateStr === selectedDate &&

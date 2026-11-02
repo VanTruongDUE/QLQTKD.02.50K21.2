@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Film,
   MapPin,
@@ -37,7 +37,31 @@ export function Navbar({
   const [authOpen, setAuthOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [memberOpen, setMemberOpen] = useState(false);
+  const [cinemas, setCinemas] = useState<CinemaLocation[]>(CINEMA_LOCATIONS);
   const { profile, loading, logout } = useAuth();
+
+  useEffect(() => {
+    fetch("/api/v1/cinemas")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          const merged: CinemaLocation[] = data.map((c: any) => {
+            const mock = CINEMA_LOCATIONS.find(
+              (m) => m.name.toLowerCase().trim() === c.name.toLowerCase().trim()
+            );
+            return {
+              id: c.id,
+              name: c.name,
+              address: mock?.address || "Hệ thống Rạp Chiếu Phim Starlight Cinema",
+              city: mock?.city || "Việt Nam",
+              hotline: mock?.hotline || "1900 1722",
+            };
+          });
+          setCinemas(merged);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const handleLogoClick = () => {
     if (onLogoClick) {
@@ -105,7 +129,7 @@ export function Navbar({
                       Chọn Cụm Rạp Starlight
                     </div>
                     <div className="py-1 max-h-72 overflow-y-auto space-y-0.5">
-                      {CINEMA_LOCATIONS.map((cinema) => (
+                      {cinemas.map((cinema) => (
                         <button
                           key={cinema.id}
                           onClick={() => {

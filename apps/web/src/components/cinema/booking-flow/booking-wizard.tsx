@@ -68,30 +68,30 @@ export function BookingWizard({
   // Wizard steps: 1 = Showtime, 2 = Seats, 3 = F&B, 4 = Checkout, 5 = Confirmed
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4 | 5>(1);
 
-  // Selections - Restored Full Starlight Neon Demo State
-  const [selectedMovie, setSelectedMovie] = useState<Movie | null>(MOVIES[0]);
-  const [selectedShowtime, setSelectedShowtime] = useState<Showtime | null>(SHOWTIMES[2]); // 19:45
-  const [seats] = useState<Seat[]>(() => generateInitialSeats());
-  const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>(["G07", "G08"]);
-  const [u22TicketCount, setU22TicketCount] = useState<number>(1);
-  const [fnbQuantities, setFnbQuantities] = useState<Record<string, number>>({
-    "fnb-combo2": 1, // 1x Combo Đôi Starlight (Best Seller) - 135.000đ
-  });
-  const [promoCode, setPromoCode] = useState<string>("STARLIGHTVIP");
-  const [promoDiscount, setPromoDiscount] = useState<number>(20000);
+  // Selections - Initial Clean Production State
+  const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
+  const [selectedShowtime, setSelectedShowtime] = useState<Showtime | null>(null);
+  const [seats, setSeats] = useState<Seat[]>(() => generateInitialSeats());
+  const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([]);
+  const [u22TicketCount, setU22TicketCount] = useState<number>(0);
+  const [fnbQuantities, setFnbQuantities] = useState<Record<string, number>>({});
+  const [promoCode, setPromoCode] = useState<string>("");
+  const [promoDiscount, setPromoDiscount] = useState<number>(0);
   const [usePoints, setUsePoints] = useState<boolean>(false);
-  const [createdTicketCode, setCreatedTicketCode] = useState<string>("STL-894210");
+  const [createdTicketCode, setCreatedTicketCode] = useState<string>("");
 
-  // Countdown Timer: initialized at 09:35 (575s) as requested
-  const [secondsRemaining, setSecondsRemaining] = useState<number>(575);
+  // Countdown Timer: 5 minutes (300s) hold time once seats are picked
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(300);
 
   // Auto switch to step 2 if demo simulation for single seat error is activated
   useEffect(() => {
     if (forceSingleSeatWarning) {
+      if (!selectedMovie) setSelectedMovie(MOVIES[0]);
+      if (!selectedShowtime) setSelectedShowtime(SHOWTIMES[2]);
       setCurrentStep(2);
       setSelectedSeatIds(["E04", "E06"]);
     }
-  }, [forceSingleSeatWarning]);
+  }, [forceSingleSeatWarning, selectedMovie, selectedShowtime]);
 
   useEffect(() => {
     if (selectedSeatIds.length === 0 || currentStep < 2 || currentStep === 5) return;
@@ -136,10 +136,35 @@ export function BookingWizard({
     }
   };
 
-  const handleSelectShowtime = (movie: Movie, showtime: Showtime) => {
+  const handleSelectShowtime = async (movie: Movie, showtime: Showtime) => {
     setSelectedMovie(movie);
     setSelectedShowtime(showtime);
+    setSelectedSeatIds([]);
+    setSecondsRemaining(300);
     setCurrentStep(2);
+
+    // Fetch real seat availability from PostgreSQL
+    try {
+      const res = await fetch(`/api/v1/showtimes/${showtime.id}/seats`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.seats && Array.isArray(data.seats)) {
+          const bookedSeatSet = new Set(
+            data.seats
+              .filter((s: any) => s.status === "SOLD" || s.status === "HELD")
+              .map((s: any) => s.label)
+          );
+          setSeats((prevSeats) =>
+            prevSeats.map((seat) => ({
+              ...seat,
+              status: bookedSeatSet.has(seat.id) ? "booked" : "available",
+            }))
+          );
+        }
+      }
+    } catch {
+      // Graceful fallback: maintain initial seat map
+    }
   };
 
   const handleQuantityChange = (itemId: string, delta: number) => {
@@ -181,8 +206,8 @@ export function BookingWizard({
   );
 
   // Payment success
-  const handlePaymentSuccess = () => {
-    const newCode = `STL-${Math.floor(100000 + Math.random() * 900000)}`;
+  const handlePaymentSuccess = (bookingCode?: string) => {
+    const newCode = bookingCode || `STL-${Math.floor(100000 + Math.random() * 900000)}`;
     setCreatedTicketCode(newCode);
 
     if (selectedMovie && selectedShowtime) {
@@ -240,14 +265,20 @@ export function BookingWizard({
             {stepsMeta.map((s) => {
               const isPast = currentStep > s.num;
               const isCurrent = currentStep === s.num;
+              const isLocked =
+                (s.num > 1 && (!selectedMovie || !selectedShowtime)) ||
+                (s.num > 2 && selectedSeatIds.length === 0);
               const Icon = s.icon;
 
               return (
                 <button
                   key={s.num}
                   type="button"
-                  onClick={() => setCurrentStep(s.num as any)}
-                  className="flex flex-col items-center gap-2 relative z-10 group cursor-pointer"
+                  disabled={isLocked}
+                  onClick={() => !isLocked && setCurrentStep(s.num as any)}
+                  className={`flex flex-col items-center gap-2 relative z-10 group ${
+                    isLocked ? "cursor-not-allowed opacity-40" : "cursor-pointer"
+                  }`}
                 >
                   <div
                     className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
@@ -360,20 +391,30 @@ export function BookingWizard({
                   </span>
                 </div>
 
-                {/* 10:00 Countdown Timer Alert Box */}
-                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-xs flex items-center justify-between text-amber-300 shadow-sm">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
-                    <span className="font-bold text-amber-300">🟡 Giữ ghế trong:</span>
+                {/* Hold Timer Alert Box */}
+                {selectedSeatIds.length > 0 ? (
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-xs flex items-center justify-between text-amber-300 shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
+                      <span className="font-bold text-amber-300">🟡 Giữ ghế trong:</span>
+                    </div>
+                    <div className="font-mono font-bold text-sm text-amber-400 flex items-center gap-1">
+                      <Timer className="w-3.5 h-3.5" />
+                      <span>{formatCountdown(secondsRemaining)}</span>
+                    </div>
                   </div>
-                  <div className="font-mono font-bold text-sm text-amber-400 flex items-center gap-1">
-                    <Timer className="w-3.5 h-3.5" />
-                    <span>{formatCountdown(secondsRemaining)}</span>
+                ) : (
+                  <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800 text-[11px] flex items-center justify-between text-zinc-400">
+                    <div className="flex items-center gap-2">
+                      <Timer className="w-3.5 h-3.5 text-zinc-500" />
+                      <span>Thời gian giữ ghế:</span>
+                    </div>
+                    <span className="font-mono font-medium text-zinc-300">05:00</span>
                   </div>
-                </div>
+                )}
 
                 {/* Movie & Showtime Info */}
-                {selectedMovie && (
+                {selectedMovie ? (
                   <div className="flex gap-3.5 items-start">
                     <img
                       src={selectedMovie.poster}
@@ -398,6 +439,14 @@ export function BookingWizard({
                         </p>
                       )}
                     </div>
+                  </div>
+                ) : (
+                  <div className="p-4 rounded-xl bg-[#0e1019] border border-dashed border-[#222538] text-center text-xs text-zinc-500 space-y-1.5">
+                    <Film className="w-6 h-6 mx-auto text-zinc-500 mb-1" />
+                    <p className="font-medium text-zinc-300">Chưa chọn suất chiếu</p>
+                    <p className="text-[11px] text-zinc-500">
+                      Vui lòng chọn phim & khung giờ bên trái để tiếp tục.
+                    </p>
                   </div>
                 )}
 
@@ -485,21 +534,36 @@ export function BookingWizard({
                 </div>
 
                 {/* Primary Next Action CTA Button with Gradient */}
-                {currentStep < 4 && (
-                  <button
-                    type="button"
-                    onClick={() => setCurrentStep((prev) => (prev + 1) as any)}
-                    className="w-full py-3.5 rounded-xl bg-gradient-to-r from-[#A855F7] to-[#EC4899] hover:opacity-95 active:scale-[0.99] text-white font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-lg shadow-pink-900/40 cursor-pointer"
-                  >
-                    <span>
-                      {currentStep === 1
-                        ? "Tiếp tục: Chọn Ghế >"
-                        : currentStep === 2
-                        ? "Tiếp tục: Bắp Nước >"
-                        : "Tiếp tục: Thanh Toán >"}
-                    </span>
-                  </button>
-                )}
+                {currentStep < 4 && (() => {
+                  const isDisabled =
+                    (currentStep === 1 && (!selectedMovie || !selectedShowtime)) ||
+                    (currentStep === 2 && selectedSeatIds.length === 0);
+
+                  return (
+                    <button
+                      type="button"
+                      disabled={isDisabled}
+                      onClick={() => !isDisabled && setCurrentStep((prev) => (prev + 1) as any)}
+                      className={`w-full py-3.5 rounded-xl text-white font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-lg ${
+                        isDisabled
+                          ? "bg-[#181B2A] text-zinc-500 border border-[#222538] cursor-not-allowed opacity-60"
+                          : "bg-gradient-to-r from-[#A855F7] to-[#EC4899] hover:opacity-95 active:scale-[0.99] shadow-pink-900/40 cursor-pointer"
+                      }`}
+                    >
+                      <span>
+                        {currentStep === 1
+                          ? selectedShowtime
+                            ? "Tiếp tục: Chọn Ghế >"
+                            : "Vui lòng chọn suất chiếu"
+                          : currentStep === 2
+                          ? selectedSeatIds.length > 0
+                            ? "Tiếp tục: Bắp Nước >"
+                            : "Vui lòng chọn ghế"
+                          : "Tiếp tục: Thanh Toán >"}
+                      </span>
+                    </button>
+                  );
+                })()}
               </div>
             </div>
           </div>

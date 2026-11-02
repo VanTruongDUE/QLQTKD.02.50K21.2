@@ -23,6 +23,27 @@ export default function CinemaApp() {
   const [activeTicketCode, setActiveTicketCode] = useState<string>("STL-894210");
   const [bookingKey, setBookingKey] = useState(0);
 
+  // Sync cinemas with backend PostgreSQL
+  useEffect(() => {
+    fetch("/api/v1/cinemas")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          const match = data.find((c: any) =>
+            c.name.toLowerCase().includes("đà nẵng") || c.name.toLowerCase().includes("da nang")
+          ) || data[0];
+          if (match) {
+            setSelectedCinema((prev) => ({
+              ...prev,
+              id: match.id,
+              name: match.name,
+            }));
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (profile?.role !== "CUSTOMER") return;
     request<Array<Record<string, any>>>("/me/tickets")
