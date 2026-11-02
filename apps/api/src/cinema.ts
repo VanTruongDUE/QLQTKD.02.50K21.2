@@ -9,24 +9,18 @@ import {
   UseGuards,
   Inject,
   Module,
-  RawBodyRequest,
+  HttpCode,
 } from "@nestjs/common";
-import { Request } from "express";
+import type { RawBodyRequest } from "@nestjs/common";
+import type { Request } from "express";
 import { DataSource } from "typeorm";
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import QRCode from "qrcode";
-import { z } from "zod";
-import {
-  holdSchema,
-  bookingSchema,
-  simulationSchema,
-  eventSchema,
-} from "@starlight/contracts";
+import { holdSchema, bookingSchema } from "@starlight/contracts";
 import { AuthModule, JwtGuard, RoleGuard, Roles, AuthRequest } from "./auth";
 import { BookingService } from "./booking.service";
-import { fail, parse, uuid } from "./http";
+import { parse, uuid } from "./http";
 import { decrypt } from "./security";
-import { secret } from "./config";
+import { PaymentGateway } from "./payments";
 @Controller()
 export class CatalogController {
   constructor(@Inject(DataSource) private db: DataSource) {}
@@ -35,21 +29,24 @@ export class CatalogController {
     return { ok: true };
   }
   @Get("movies") movies() {
-    return this.db.query("SELECT * FROM movies WHERE active ORDER BY title");
+    return this.db.query("SELECT * FROM movies WHERE active AND provenance='OPERATIONAL' ORDER BY title");
+  }
+  @Get("cinemas") cinemas() {
+    return this.db.query("SELECT id,name FROM cinemas WHERE provenance='OPERATIONAL' ORDER BY name");
   }
   @Get("products") products() {
-    return this.db.query("SELECT * FROM products WHERE active ORDER BY price");
+    return this.db.query("SELECT * FROM products WHERE active AND provenance='OPERATIONAL' ORDER BY price");
   }
   @Get("showtimes") showtimes() {
     return this.db.query(
-      `SELECT s.*,a.name AS room,c.name AS cinema FROM showtimes s JOIN auditoriums a ON a.id=s.auditorium_id JOIN cinemas c ON c.id=a.cinema_id WHERE s.starts_at>clock_timestamp() AND s.status='SCHEDULED' ORDER BY s.starts_at`,
+      `SELECT s.*,a.name AS room,c.name AS cinema FROM showtimes s JOIN auditoriums a ON a.id=s.auditorium_id JOIN cinemas c ON c.id=a.cinema_id JOIN movies m ON m.id=s.movie_id WHERE s.starts_at>clock_timestamp() AND s.status='SCHEDULED' AND s.provenance='OPERATIONAL' AND a.provenance='OPERATIONAL' AND c.provenance='OPERATIONAL' AND m.provenance='OPERATIONAL' ORDER BY s.starts_at`,
     );
   }
   @Get("showtimes/:id/seats") async seats(@Param("id") id: string) {
     return {
       serverTime: new Date(),
       seats: await this.db.query(
-        `SELECT ss.seat_id AS id,se.label,CASE WHEN ss.ticket_id IS NOT NULL THEN 'SOLD' WHEN h.status='ACTIVE' AND h.expires_at>clock_timestamp() THEN 'HELD' ELSE 'AVAILABLE' END AS status FROM showtime_seats ss JOIN seats se ON se.id=ss.seat_id LEFT JOIN holds h ON h.id=ss.hold_id WHERE ss.showtime_id=$1 ORDER BY se.label`,
+        `SELECT ss.seat_id AS id,se.label,CASE WHEN ss.ticket_id IS NOT NULL THEN 'SOLD' WHEN h.status='ACTIVE' AND h.expires_at>clock_timestamp() THEN 'HELD' ELSE 'AVAILABLE' END AS status FROM showtime_seats ss JOIN seats se ON se.id=ss.seat_id JOIN showtimes st ON st.id=ss.showtime_id LEFT JOIN holds h ON h.id=ss.hold_id WHERE ss.showtime_id=$1 AND st.provenance='OPERATIONAL' ORDER BY se.label`,
         [uuid(id)],
       ),
     };
@@ -83,15 +80,20 @@ export class CinemaController {
   ) {
     return this.bookings.createPayment(req.user.id, uuid(id), key);
   }
-  @Get("me/bookings") async orders(@Req() req: AuthRequest) {
+  @Get("me/bookings") @Roles("CUSTOMER") async orders(@Req() req: AuthRequest) {
     return this.db.query(
       `SELECT b.*,h.expires_at,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',p.id,'status',p.status,'reconciliationRequired',p.reconciliation_required) ORDER BY p.created_at DESC) FROM payments p WHERE p.booking_id=b.id),'[]'::jsonb) AS payments FROM bookings b JOIN holds h ON h.id=b.hold_id WHERE b.owner_id=$1 ORDER BY b.created_at DESC`,
       [req.user.id],
     );
   }
-  @Get("me/tickets") async tickets(@Req() req: AuthRequest) {
+  @Get("me/tickets") @Roles("CUSTOMER") async tickets(@Req() req: AuthRequest) {
     const tickets = await this.db.query(
-      `SELECT t.*,i.movie_title,i.seat_label,i.booking_id,s.starts_at,a.name AS room,c.name AS cinema FROM tickets t JOIN booking_items i ON i.id=t.item_id JOIN bookings b ON b.id=i.booking_id JOIN showtimes s ON s.id=i.showtime_id JOIN auditoriums a ON a.id=s.auditorium_id JOIN cinemas c ON c.id=a.cinema_id WHERE b.owner_id=$1 ORDER BY b.created_at DESC`,
+      `SELECT t.*,i.movie_title,i.seat_label,i.booking_id,i.showtime_id,b.created_at,s.starts_at,s.price,
+      a.name AS room,c.id AS cinema_id,c.name AS cinema,m.id AS movie_id,m.duration_minutes,m.rating,m.poster,m.description
+      FROM tickets t JOIN booking_items i ON i.id=t.item_id JOIN bookings b ON b.id=i.booking_id
+      JOIN showtimes s ON s.id=i.showtime_id JOIN movies m ON m.id=s.movie_id
+      JOIN auditoriums a ON a.id=s.auditorium_id JOIN cinemas c ON c.id=a.cinema_id
+      WHERE b.owner_id=$1 ORDER BY b.created_at DESC,t.id`,
       [req.user.id],
     );
     return Promise.all(
@@ -109,66 +111,6 @@ export class CinemaController {
       }),
     );
   }
-  @Post("payments/:id/simulate") @Roles("CUSTOMER") async simulate(
-    @Req() req: AuthRequest,
-    @Param("id") id: string,
-    @Body() body: unknown,
-    @Headers("idempotency-key") key: string,
-  ) {
-    if (
-      process.env.DEMO_PAYMENTS !== "true" ||
-      process.env.NODE_ENV === "production"
-    )
-      fail("DEMO_DISABLED", "Thanh toán giả lập đã tắt.", 403);
-    const { outcome } = parse(simulationSchema, body);
-    uuid(id);
-    const result = (await this.bookings.idempotent(
-      req.user.id,
-      "simulation",
-      key,
-      { id, outcome },
-      async (m) => {
-        const [ref] = await m.query(
-          "SELECT b.id FROM bookings b JOIN payments p ON p.booking_id=b.id WHERE p.id=$1 AND b.owner_id=$2",
-          [id, req.user.id],
-        );
-        if (!ref) fail("NOT_FOUND", "Không tìm thấy thanh toán.", 404);
-        await m.query("SELECT id FROM bookings WHERE id=$1 FOR UPDATE", [
-          ref.id,
-        ]);
-        const [payment] = await m.query(
-          "SELECT * FROM payments WHERE id=$1 FOR UPDATE",
-          [id],
-        );
-        if (outcome === "timeout") {
-          if (payment.status === "PENDING")
-            await m.query(`UPDATE payments SET status='UNKNOWN' WHERE id=$1`, [
-              id,
-            ]);
-          return { timeout: true };
-        }
-        return {
-          event: {
-            eventId: randomUUID(),
-            paymentId: id,
-            amount: payment.amount,
-            currency: "VND" as const,
-            status:
-              outcome === "success"
-                ? ("SUCCEEDED" as const)
-                : ("FAILED" as const),
-          },
-        };
-      },
-    )) as { timeout?: boolean; event?: z.infer<typeof eventSchema> };
-    if (result.timeout)
-      return {
-        status: "UNKNOWN",
-        message: "Chưa xác định kết quả; cần đối soát trước khi thu lại.",
-      };
-    // The demo adapter creates a provider event; the browser never chooses amount or marks the booking paid.
-    return this.bookings.callback(result.event!);
-  }
   @Get("admin/reconciliation") @Roles("MANAGER") async reconciliation(
     @Req() req: AuthRequest,
   ) {
@@ -178,27 +120,32 @@ export class CinemaController {
     );
   }
 }
+
 @Controller("webhooks/payments")
-export class WebhookController {
-  constructor(@Inject(BookingService) private bookings: BookingService) {}
-  @Post("demo") callback(
-    @Req() req: RawBodyRequest<Request>,
-    @Headers("x-payment-signature") signature: string,
-    @Body() body: unknown,
-  ) {
-    const expected = createHmac("sha256", secret("PAYMENT_WEBHOOK_SECRET"))
-      .update(req.rawBody || Buffer.alloc(0))
-      .digest();
-    const actual = Buffer.from(signature || "", "hex");
-    if (actual.length !== expected.length || !timingSafeEqual(actual, expected))
-      fail("INVALID_SIGNATURE", "Chữ ký thanh toán không hợp lệ.", 401);
-    return this.bookings.callback(parse(eventSchema, body));
+export class PaymentWebhookController {
+  constructor(
+    @Inject(BookingService) private bookings: BookingService,
+    @Inject(PaymentGateway) private gateway: PaymentGateway,
+  ) {}
+
+  @Post("momo")
+  @HttpCode(204)
+  async momo(@Req() req: RawBodyRequest<Request>, @Headers() headers: Record<string, string>) {
+    if (!req.rawBody) throw new Error("Raw request body is required for MoMo signature verification.");
+    const event = this.gateway.verifyWebhook(req.rawBody, headers);
+    await this.bookings.callback({
+      eventId: event.eventId,
+      paymentId: event.id,
+      amount: event.amount,
+      currency: event.currency,
+      status: event.status,
+    });
   }
 }
 @Module({
   imports: [AuthModule],
-  controllers: [CatalogController, CinemaController, WebhookController],
-  providers: [BookingService],
-  exports: [BookingService],
+  controllers: [CatalogController, CinemaController, PaymentWebhookController],
+  providers: [BookingService, PaymentGateway],
+  exports: [BookingService, PaymentGateway],
 })
 export class CinemaModule {}

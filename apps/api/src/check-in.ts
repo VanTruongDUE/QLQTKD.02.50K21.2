@@ -10,6 +10,7 @@ import {
   Query,
   Req,
   UseGuards,
+  HttpException,
 } from "@nestjs/common";
 import { DataSource, EntityManager } from "typeorm";
 import {
@@ -43,11 +44,21 @@ export class CheckInService {
 
   async showtimes(staffId: string) {
     return this.db.query(
-      `SELECT s.id,m.title,s.starts_at,s.status,a.name AS room,c.name AS cinema,
+      `SELECT s.id,m.title,m.description,m.duration_minutes,m.rating,m.poster,
+      s.starts_at,s.ends_at,s.status,a.name AS room,c.name AS cinema,
+      (SELECT count(*)::int FROM tickets t JOIN booking_items bi ON bi.id=t.item_id
+       JOIN bookings b ON b.id=bi.booking_id
+       WHERE bi.showtime_id=s.id AND b.status='CONFIRMED' AND t.status IN ('ISSUED','CHECKED_IN')) AS "ticketCount",
+      (SELECT count(*)::int FROM tickets t JOIN booking_items bi ON bi.id=t.item_id
+       JOIN bookings b ON b.id=bi.booking_id
+       WHERE bi.showtime_id=s.id AND b.status='CONFIRMED' AND t.status='ISSUED') AS "eligibleTicketCount",
+      (SELECT count(*)::int FROM check_ins ci JOIN tickets t ON t.id=ci.ticket_id
+       JOIN booking_items bi ON bi.id=t.item_id JOIN bookings b ON b.id=bi.booking_id
+       WHERE bi.showtime_id=s.id AND b.status='CONFIRMED') AS "checkedInCount",
       s.starts_at-interval '30 minutes' AS "checkInOpensAt",s.starts_at+interval '15 minutes' AS "checkInClosesAt"
       FROM showtimes s JOIN movies m ON m.id=s.movie_id JOIN auditoriums a ON a.id=s.auditorium_id
       JOIN cinemas c ON c.id=a.cinema_id JOIN staff_cinema_assignments sa ON sa.cinema_id=c.id
-      WHERE sa.user_id=$1 AND s.starts_at BETWEEN clock_timestamp()-interval '1 day' AND clock_timestamp()+interval '7 days'
+      WHERE sa.user_id=$1 AND s.provenance='OPERATIONAL' AND s.starts_at BETWEEN clock_timestamp()-interval '1 day' AND clock_timestamp()+interval '7 days'
       ORDER BY s.starts_at DESC`,
       [staffId],
     );
@@ -86,11 +97,12 @@ export class CheckInService {
     return this.db.transaction((m) => this.validateTicket(m, staffId, input));
   }
 
-  confirm(
+  async confirm(
     staffId: string,
     input: CheckInInput & { ageVerified: true },
     key?: string,
   ) {
+    await this.authorizeShow(this.db.manager, staffId, input.showtimeId);
     return this.bookings.idempotent(
       staffId,
       "check-in",
@@ -108,8 +120,8 @@ export class CheckInService {
           [ticket.id, staffId],
         );
         await m.query(
-          `INSERT INTO audit_logs(actor_id,action,entity_id) VALUES($1,'ticket.checked_in',$2)`,
-          [staffId, ticket.id],
+          `INSERT INTO audit_logs(actor_id,action,entity_id,cinema_id) SELECT $1,'ticket.checked_in',$2,a.cinema_id FROM showtimes s JOIN auditoriums a ON a.id=s.auditorium_id WHERE s.id=$3`,
+          [staffId, ticket.id, input.showtimeId],
         );
         return { ...receipt, status: "CHECKED_IN" };
       },
@@ -122,9 +134,16 @@ export class CheckInService {
     input: CheckInInput,
   ) {
     await this.authorizeShow(m, staffId, input.showtimeId);
+    // Serialize with change/refund operations on the parent booking before locking its ticket/showtime.
+    await m.query(
+      `SELECT b.id FROM bookings b JOIN booking_items i ON i.booking_id=b.id JOIN tickets t ON t.item_id=i.id
+      JOIN showtimes s ON s.id=i.showtime_id JOIN auditoriums a ON a.id=s.auditorium_id JOIN staff_cinema_assignments sa ON sa.cinema_id=a.cinema_id
+      WHERE ${input.ticketCode ? "t.id=$1::uuid" : "t.qr_hash=$1"} AND sa.user_id=$2 FOR UPDATE OF b`,
+      [input.ticketCode || hash(input.token!), staffId],
+    );
     const [ticket] = await m.query(
       `SELECT t.id,t.status,i.movie_title,i.seat_label,i.showtime_id,s.starts_at,
-      s.status AS show_status,b.status AS booking_status,m.rating,a.name AS room,c.name AS cinema
+      s.status AS show_status,b.status AS booking_status,b.provenance,m.rating,a.name AS room,c.name AS cinema
       FROM tickets t JOIN booking_items i ON i.id=t.item_id JOIN bookings b ON b.id=i.booking_id
       JOIN showtimes s ON s.id=i.showtime_id JOIN movies m ON m.id=s.movie_id
       JOIN auditoriums a ON a.id=s.auditorium_id JOIN cinemas c ON c.id=a.cinema_id
@@ -143,6 +162,11 @@ export class CheckInService {
       fail(
         "WRONG_SHOWTIME",
         "Vé thuộc suất chiếu khác. Hãy kiểm tra suất trên vé.",
+      );
+    if (ticket.provenance !== "OPERATIONAL")
+      fail(
+        "LEGACY_DATA",
+        "Vé cũ thuộc dữ liệu giả lập, không dùng cho vận hành.",
       );
     const reasons: Record<string, [string, string]> = {
       CHECKED_IN: [
@@ -192,11 +216,27 @@ export class CheckInService {
     void booking_status;
     return details;
   }
+  async rejected(staffId: string, showtimeId: string, error: unknown) {
+    if (error instanceof HttpException) {
+      const body = error.getResponse() as { code?: string };
+      await this.db.query(
+        `INSERT INTO audit_logs(actor_id,action,entity_id,cinema_id,details)
+        SELECT $1,'check-in.rejected',s.id,a.cinema_id,$3 FROM showtimes s JOIN auditoriums a ON a.id=s.auditorium_id
+        JOIN staff_cinema_assignments sa ON sa.cinema_id=a.cinema_id WHERE sa.user_id=$1 AND s.id=$2`,
+        [
+          staffId,
+          showtimeId,
+          JSON.stringify({ code: body.code || "REQUEST_ERROR" }),
+        ],
+      );
+    }
+    throw error;
+  }
 }
 
 @Controller("check-in")
 @UseGuards(JwtGuard, RoleGuard)
-@Roles("GATE")
+@Roles("STAFF")
 export class CheckInController {
   constructor(@Inject(CheckInService) private service: CheckInService) {}
   @Get("showtimes") showtimes(@Req() req: AuthRequest) {
@@ -209,18 +249,24 @@ export class CheckInController {
     return this.service.history(req.user.id, uuid(id));
   }
   @Post("inspect") inspect(@Req() req: AuthRequest, @Body() body: unknown) {
-    return this.service.inspect(req.user.id, parse(checkInSchema, body));
+    const input = parse(checkInSchema, body);
+    return this.service
+      .inspect(req.user.id, input)
+      .catch((error) =>
+        this.service.rejected(req.user.id, input.showtimeId, error),
+      );
   }
   @Post("confirm") confirm(
     @Req() req: AuthRequest,
     @Body() body: unknown,
     @Headers("idempotency-key") key: string,
   ) {
-    return this.service.confirm(
-      req.user.id,
-      parse(confirmCheckInSchema, body),
-      key,
-    );
+    const input = parse(confirmCheckInSchema, body);
+    return this.service
+      .confirm(req.user.id, input, key)
+      .catch((error) =>
+        this.service.rejected(req.user.id, input.showtimeId, error),
+      );
   }
 }
 @Module({

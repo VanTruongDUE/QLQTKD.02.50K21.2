@@ -3,9 +3,14 @@ import { DataSource, EntityManager } from "typeorm";
 import { randomBytes } from "node:crypto";
 import { hash, encrypt } from "./security";
 import { fail } from "./http";
+import { PaymentGateway } from "./payments";
 @Injectable()
 export class BookingService {
-  constructor(@Inject(DataSource) readonly db: DataSource) {}
+  constructor(
+    @Inject(DataSource) readonly db: DataSource,
+    @Inject(PaymentGateway)
+    readonly gateway: PaymentGateway = new PaymentGateway(),
+  ) {}
   async idempotent(
     owner: string,
     operation: string,
@@ -52,7 +57,7 @@ export class BookingService {
       { ...input, seatIds: [...input.seatIds].sort() },
       async (m) => {
         const [show] = await m.query(
-          `SELECT * FROM showtimes WHERE id=$1 AND starts_at>clock_timestamp() AND status='SCHEDULED'`,
+          `SELECT s.* FROM showtimes s JOIN auditoriums a ON a.id=s.auditorium_id JOIN cinemas c ON c.id=a.cinema_id JOIN movies m ON m.id=s.movie_id WHERE s.id=$1 AND s.starts_at>clock_timestamp() AND s.status='SCHEDULED' AND s.provenance='OPERATIONAL' AND a.provenance='OPERATIONAL' AND c.provenance='OPERATIONAL' AND m.provenance='OPERATIONAL' AND a.active FOR SHARE OF s`,
           [input.showtimeId],
         );
         if (!show) fail("SHOWTIME_UNAVAILABLE", "Suất chiếu đã đóng.", 404);
@@ -124,7 +129,7 @@ export class BookingService {
         "SELECT s.*,m.title FROM showtimes s JOIN movies m ON m.id=s.movie_id WHERE s.id=$1",
         [hold.showtime_id],
       );
-      if (show.starts_at <= clock.now || show.status !== "SCHEDULED")
+      if (show.provenance!=='OPERATIONAL' || show.starts_at <= clock.now || show.status !== "SCHEDULED")
         fail("SHOWTIME_UNAVAILABLE", "Suất chiếu đã đóng.");
       if (
         new Set(input.products.map((p) => p.productId)).size !==
@@ -135,13 +140,15 @@ export class BookingService {
       let total = seats.length * show.price;
       for (const item of input.products) {
         const [p] = await m.query(
-          "SELECT * FROM products WHERE id=$1 AND active",
-          [item.productId],
+          "SELECT p.* FROM products p JOIN auditoriums a ON a.id=$2 WHERE p.id=$1 AND p.active AND p.provenance='OPERATIONAL' AND (p.cinema_id IS NULL OR p.cinema_id=a.cinema_id)",
+          [item.productId, show.auditorium_id],
         );
         if (!p) fail("INVALID_PRODUCT", "Combo không còn bán.", 422);
         products.push({ ...p, quantity: item.quantity });
         total += p.price * item.quantity;
       }
+      if (!Number.isSafeInteger(total) || total > 2147483647)
+        fail("AMOUNT_OUT_OF_RANGE", "Tổng tiền vượt phạm vi xử lý.", 422);
       const [booking] = await m.query(
         "INSERT INTO bookings(owner_id,hold_id,total) VALUES($1,$2,$3) RETURNING *",
         [owner, hold.id, total],
@@ -171,31 +178,78 @@ export class BookingService {
     });
   }
   async createPayment(owner: string, bookingId: string, key?: string) {
-    return this.idempotent(owner, "payment", key, { bookingId }, async (m) => {
-      const [booking] = await m.query(
-        "SELECT * FROM bookings WHERE id=$1 AND owner_id=$2 FOR UPDATE",
-        [bookingId, owner],
-      );
-      if (!booking) fail("NOT_FOUND", "Không tìm thấy đơn.", 404);
-      if (booking.status !== "PENDING_PAYMENT")
-        fail("BOOKING_CLOSED", "Đơn không còn chờ thanh toán.");
-      const [hold] = await m.query(
-        "SELECT *,clock_timestamp() AS now FROM holds WHERE id=$1",
-        [booking.hold_id],
-      );
-      if (hold.status !== "ACTIVE" || hold.expires_at <= hold.now)
-        fail("HOLD_EXPIRED", "Giữ ghế đã hết hạn.");
-      const [active] = await m.query(
-        `SELECT * FROM payments WHERE booking_id=$1 AND status IN ('PENDING','UNKNOWN','SUCCEEDED') ORDER BY created_at DESC LIMIT 1`,
-        [bookingId],
-      );
-      if (active) return active;
-      const [payment] = await m.query(
-        "INSERT INTO payments(booking_id,amount) VALUES($1,$2) RETURNING *",
-        [bookingId, booking.total],
-      );
-      return payment;
-    });
+    if (
+      !(
+        await this.db.query(
+          "SELECT 1 FROM bookings WHERE id=$1 AND owner_id=$2",
+          [bookingId, owner],
+        )
+      ).length
+    )
+      fail("NOT_FOUND", "Không tìm thấy đơn.", 404);
+    this.gateway.assertConfigured();
+    const result = await this.idempotent(
+      owner,
+      "payment",
+      key,
+      { bookingId },
+      async (m) => {
+        const [booking] = await m.query(
+          "SELECT * FROM bookings WHERE id=$1 AND owner_id=$2 FOR UPDATE",
+          [bookingId, owner],
+        );
+        if (!booking) fail("NOT_FOUND", "Không tìm thấy đơn.", 404);
+        if (booking.provenance !== "OPERATIONAL")
+          fail(
+            "LEGACY_DATA",
+            "Đơn cũ chỉ dùng tra cứu, không tạo giao dịch thật.",
+          );
+        if (booking.status !== "PENDING_PAYMENT")
+          fail("BOOKING_CLOSED", "Đơn không còn chờ thanh toán.");
+        const [hold] = await m.query(
+          "SELECT *,clock_timestamp() AS now FROM holds WHERE id=$1",
+          [booking.hold_id],
+        );
+        if (hold.status !== "ACTIVE" || hold.expires_at <= hold.now)
+          fail("HOLD_EXPIRED", "Giữ ghế đã hết hạn.");
+        const [active] = await m.query(
+          `SELECT * FROM payments WHERE booking_id=$1 AND status IN ('CREATED','PENDING','UNKNOWN','SUCCEEDED') ORDER BY created_at DESC LIMIT 1`,
+          [bookingId],
+        );
+        if (active) return active;
+        const [payment] = await m.query(
+          "INSERT INTO payments(booking_id,amount,status,provider) VALUES($1,$2,'CREATED',$3) RETURNING *",
+          [bookingId, booking.total, this.gateway.name],
+        );
+        return payment;
+      },
+    );
+    const id = (result as { id: string }).id;
+    const [claimed] = await this.db.query(
+      `WITH updated AS (UPDATE payments SET status='UNKNOWN' WHERE id=$1 AND status='CREATED' RETURNING *) SELECT * FROM updated`,
+      [id],
+    );
+    if (claimed) {
+      try {
+        const response = await this.gateway.charge(id, claimed.amount);
+        // Only verified callbacks issue tickets, never a browser redirect or checkout URL.
+        await this.db.query(
+          "UPDATE payments SET status=$2,checkout_url=$3 WHERE id=$1 AND status='UNKNOWN'",
+          [
+            id,
+            response.status === "FAILED"
+              ? "FAILED"
+              : response.status === "PENDING"
+                ? "PENDING"
+                : "UNKNOWN",
+            response.checkoutUrl || null,
+          ],
+        );
+      } catch {
+        /* UNKNOWN persists for provider reconciliation, never retry a new charge blindly. */
+      }
+    }
+    return (await this.db.query("SELECT * FROM payments WHERE id=$1", [id]))[0];
   }
   async callback(event: {
     eventId: string;
@@ -204,6 +258,15 @@ export class BookingService {
     currency: "VND";
     status: "SUCCEEDED" | "FAILED";
   }) {
+    this.gateway.assertConfigured();
+    const [purpose] = await this.db.query(
+      "SELECT change_request_id FROM payments WHERE id=$1",
+      [event.paymentId],
+    );
+    if (purpose?.change_request_id) {
+      const { ChangesService } = await import("./changes");
+      return new ChangesService(this.db, this.gateway).paymentEvent(event);
+    }
     return this.db.transaction(async (m) => {
       await m.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
         `event:${event.eventId}`,
@@ -234,6 +297,11 @@ export class BookingService {
         "SELECT * FROM payments WHERE id=$1 FOR UPDATE",
         [event.paymentId],
       );
+      if (booking.provenance !== "OPERATIONAL")
+        fail("LEGACY_DATA", "Không xử lý thanh toán cũ như tiền thật.");
+      if(payment.provider!==this.gateway.name)fail('PROVIDER_MISMATCH','Giao dịch thuộc nhà cung cấp khác.',422);
+      if (event.currency !== "VND")
+        fail("CURRENCY_MISMATCH", "Đơn vị tiền không khớp.", 422);
       if (payment.amount !== event.amount)
         fail("AMOUNT_MISMATCH", "Số tiền không khớp.", 422);
       await m.query(
@@ -308,7 +376,16 @@ export class BookingService {
           "UPDATE showtime_seats SET hold_id=NULL,ticket_id=$1 WHERE showtime_id=$2 AND seat_id=$3",
           [ticket.id, item.showtime_id, item.seat_id],
         );
+        if (item.amount > 0)
+          await m.query(
+            "INSERT INTO money_allocations(payment_id,ticket_id,amount) VALUES($1,$2,$3)",
+            [payment.id, ticket.id, item.amount],
+          );
       }
+      await m.query(
+        "INSERT INTO money_allocations(payment_id,product_item_id,amount) SELECT $1,id,quantity*unit_price FROM order_product_items WHERE booking_id=$2 AND quantity*unit_price>0",
+        [payment.id, booking.id],
+      );
       await m.query(`UPDATE holds SET status='CONSUMED' WHERE id=$1`, [
         hold.id,
       ]);

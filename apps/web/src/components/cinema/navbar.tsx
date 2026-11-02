@@ -8,11 +8,15 @@ import {
   Ticket,
   RotateCcw,
   QrCode,
-  Award,
   User,
+  LogOut,
+  Settings,
 } from "lucide-react";
 import { CinemaLocation } from "./types";
 import { CINEMA_LOCATIONS } from "./mock-data";
+import { AuthDialog } from "@/components/auth/auth-dialog";
+import { AccountCenter, roleLabel } from "@/components/auth/account-center";
+import { useAuth } from "@/components/auth/auth-provider";
 
 interface NavbarProps {
   activeTab: "booking" | "exchange_refund" | "checkin";
@@ -30,6 +34,10 @@ export function Navbar({
   onLogoClick,
 }: NavbarProps) {
   const [isLocationOpen, setIsLocationOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [memberOpen, setMemberOpen] = useState(false);
+  const { profile, loading, logout } = useAuth();
 
   const handleLogoClick = () => {
     if (onLogoClick) {
@@ -40,6 +48,7 @@ export function Navbar({
   };
 
   return (
+    <>
     <header className="sticky top-0 z-50 w-full bg-[#0B0C14]/95 backdrop-blur-md border-b border-[#222538]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16 gap-3">
@@ -128,7 +137,7 @@ export function Navbar({
           </div>
 
           {/* Segmented Core View Switcher - Starlight Neon Gradient, No text clipping */}
-          <nav className="flex items-center p-1 rounded-xl bg-[#131520] border border-[#222538] flex-shrink-0">
+          <nav className="hidden xl:flex items-center p-1 rounded-xl bg-[#131520] border border-[#222538] flex-shrink-0">
             <button
               onClick={() => onTabChange("booking")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all whitespace-nowrap cursor-pointer ${
@@ -169,27 +178,26 @@ export function Navbar({
             </button>
           </nav>
 
-          {/* Compact Member Status Bar (Single Line) */}
-          <div className="hidden lg:flex items-center gap-2 flex-shrink-0">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#131520] border border-[#222538] text-xs whitespace-nowrap">
-              <Award className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-              <span className="font-medium text-zinc-200">Starlight Gold</span>
-              <span className="text-zinc-600">•</span>
-              <span className="font-semibold text-amber-400">1.250 điểm</span>
-              <span className="text-[10px] px-1 py-0.2 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 font-bold">
-                VIP
-              </span>
-            </div>
-
-            <div
-              className="w-8 h-8 rounded-lg bg-[#131520] border border-[#222538] flex items-center justify-center text-zinc-400 hover:text-white transition-colors cursor-pointer"
-              title="khach@starlight.demo"
-            >
-              <User className="w-3.5 h-3.5" />
-            </div>
+          <div className="relative flex items-center gap-2 flex-shrink-0">
+            {!loading && !profile ? (
+              <button onClick={() => setAuthOpen(true)} className="rounded-lg border border-purple-500/60 px-3 py-2 text-xs font-bold text-purple-200 hover:bg-purple-500/10"><span className="hidden sm:inline">Đăng nhập / Đăng ký</span><span className="sm:hidden">Đăng nhập</span></button>
+            ) : profile ? (
+              <button onClick={() => setMemberOpen((value) => !value)} className="inline-flex max-w-[190px] items-center gap-2 rounded-lg border border-[#30344a] bg-[#131520] px-3 py-2 text-left text-xs">
+                <User className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+                <span className="min-w-0"><span className="block truncate font-semibold text-white">{profile.display_name || profile.email}</span><span className="block text-[10px] text-amber-400">{roleLabel(profile.role)}</span></span>
+              </button>
+            ) : <span className="h-8 w-24 animate-pulse rounded-lg bg-[#181b2a]" />}
+            {memberOpen && profile && <div className="absolute right-0 top-12 z-50 w-72 rounded-xl border border-[#30344a] bg-[#131520] p-2 shadow-2xl">
+              <div className="border-b border-[#272a3d] px-3 py-2"><p className="truncate text-sm font-semibold">{profile.email}</p><p className="mt-1 text-[11px] text-zinc-500">Quyền: {roleLabel(profile.role)}</p></div>
+              <button onClick={() => { setAccountOpen(true); setMemberOpen(false); }} className="mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm text-zinc-300 hover:bg-white/5"><Settings className="h-4 w-4" /> Quản lý tài khoản</button>
+              <button onClick={() => { void logout(); setMemberOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm text-rose-300 hover:bg-rose-500/10"><LogOut className="h-4 w-4" /> Đăng xuất</button>
+            </div>}
           </div>
         </div>
       </div>
     </header>
+    <AuthDialog open={authOpen} onClose={() => setAuthOpen(false)} />
+    {accountOpen && <AccountCenter onClose={() => setAccountOpen(false)} />}
+    </>
   );
 }

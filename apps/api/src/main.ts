@@ -7,7 +7,6 @@ import { required, secret } from "./config";
 export async function bootstrap(port = Number(process.env.PORT || 4000)) {
   secret("JWT_SECRET");
   secret("QR_SECRET");
-  secret("PAYMENT_WEBHOOK_SECRET");
   const app = await NestFactory.create(AppModule, { rawBody: true });
   app.setGlobalPrefix("api/v1");
   app.use(helmet());

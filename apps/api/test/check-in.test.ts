@@ -11,7 +11,7 @@ let db: DataSource,
   app: import("@nestjs/common").INestApplication,
   base: string;
 let fixture: Awaited<
-  ReturnType<typeof import("../src/database/seed-check-in").seedCheckIn>
+  ReturnType<typeof import("./fixtures/seed-check-in").seedCheckIn>
 >;
 const tokens: Record<string, string> = {};
 const key = () => randomUUID();
@@ -52,7 +52,7 @@ beforeAll(async () => {
   db = new DataSource({ ...databaseOptions, url });
   await db.initialize();
   await db.runMigrations();
-  const { seedCheckIn } = await import("../src/database/seed-check-in");
+  const { seedCheckIn } = await import("./fixtures/seed-check-in");
   fixture = await seedCheckIn(db);
   const { bootstrap } = await import("../src/main");
   app = await bootstrap(0);
@@ -265,7 +265,7 @@ describe("Check-in rules and atomic commit", () => {
       staffEmail: "soatve@starlight.demo",
     });
   });
-  it.each(["none", "customer", "counter", "manager"])(
+  it.each(["none", "customer", "manager"])(
     "rejects %s at all gate endpoints",
     async (role) => {
       const expected = role === "none" ? 401 : 403;
@@ -295,13 +295,33 @@ describe("Check-in rules and atomic commit", () => {
       ).toBe(expected);
     },
   );
+  it("lists assigned movie details and ticket progress for staff", async () => {
+    const response = await http("/check-in/showtimes");
+    expect(response.status).toBe(200);
+    const shows = await response.json();
+    const assignedShow = shows.find((show: { id: string }) => show.id === fixture.shows[0].id);
+    expect(assignedShow).toMatchObject({
+      title: expect.any(String),
+      description: expect.any(String),
+      duration_minutes: expect.any(Number),
+      rating: expect.any(String),
+      room: expect.any(String),
+      cinema: expect.any(String),
+      ticketCount: expect.any(Number),
+      eligibleTicketCount: expect.any(Number),
+      checkedInCount: expect.any(Number),
+    });
+    expect(assignedShow.ticketCount).toBe(
+      assignedShow.eligibleTicketCount + assignedShow.checkedInCount,
+    );
+  });
   it("hides tickets/showtimes/history from a gate assigned to another cinema", async () => {
     const [otherCinema] = await db.query(
       "INSERT INTO cinemas(name) VALUES('Scope isolation test') RETURNING id",
     );
     const { hashPassword } = await import("../src/security");
     const [staff] = await db.query(
-      "INSERT INTO users(email,password_hash,role) VALUES($1,$2,'GATE') RETURNING id",
+      "INSERT INTO users(email,password_hash,role) VALUES($1,$2,'STAFF') RETURNING id",
       [`${key()}@starlight.demo`, hashPassword(process.env.DEMO_PASSWORD!)],
     );
     await db.query("INSERT INTO staff_cinema_assignments VALUES($1,$2)", [

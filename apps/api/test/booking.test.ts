@@ -1,3 +1,4 @@
+import { TestGateway } from "./gateway";
 import { beforeAll, afterAll, describe, it, expect } from "vitest";
 import { randomUUID, createHmac } from "node:crypto";
 import { DataSource } from "typeorm";
@@ -66,10 +67,10 @@ beforeAll(async () => {
   db = new DataSource({ ...databaseOptions, url: testUrl });
   await db.initialize();
   await db.runMigrations();
-  const { seed } = await import("../src/database/seed");
+  const { seed } = await import("./fixtures/seed");
   await seed(db);
   const { BookingService } = await import("../src/booking.service");
-  service = new BookingService(db);
+  service = new BookingService(db, new TestGateway());
   const users = await db.query("SELECT id,email FROM users");
   owner = users.find((u: any) => u.email === "khach@starlight.demo").id;
   other = users.find((u: any) => u.email === "khach2@starlight.demo").id;
@@ -265,13 +266,7 @@ describe("PostgreSQL transactions and invariants", () => {
   });
   it("AC16: unknown payment prevents a second charge", async () => {
     const { b, p } = await purchase([seats[10]]);
-    const response = await http(
-      `/payments/${p.id}/simulate`,
-      { outcome: "timeout" },
-      customerToken,
-      { "Idempotency-Key": key() },
-    );
-    expect(response.status).toBe(201);
+    await db.query("UPDATE payments SET status='UNKNOWN' WHERE id=$1", [p.id]);
     const next = (await service.createPayment(owner, b.id, key())) as any;
     expect(next.id).toBe(p.id);
     expect(next.status).toBe("UNKNOWN");
@@ -394,11 +389,11 @@ describe("HTTP security and check-in", () => {
       (await http("/admin/reconciliation", undefined, customerToken)).status,
     ).toBe(403);
   });
-  it("signed webhook accepts real HMAC; rejects forged callback", async () => {
+  it("demo webhook is removed even with a HMAC header", async () => {
     const { p } = await purchase([seats[15]]);
     const e = event(p);
-    expect((await http("/webhooks/payments/demo", e)).status).toBe(401);
-    const signature = createHmac("sha256", process.env.PAYMENT_WEBHOOK_SECRET!)
+    expect((await http("/webhooks/payments/demo", e)).status).toBe(404);
+    const signature = createHmac("sha256", key())
       .update(JSON.stringify(e))
       .digest("hex");
     expect(
@@ -407,7 +402,7 @@ describe("HTTP security and check-in", () => {
           "x-payment-signature": signature,
         })
       ).status,
-    ).toBe(201);
+    ).toBe(404);
   });
   it("AC11: inspect is read-only; concurrent gate confirms consume ticket only once", async () => {
     const { b, p } = await purchase([seats[16]]);

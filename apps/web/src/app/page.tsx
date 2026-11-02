@@ -1,16 +1,17 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Navbar } from "@/components/cinema/navbar";
 import { BookingWizard } from "@/components/cinema/booking-flow/booking-wizard";
 import { ExchangeRefundDashboard } from "@/components/cinema/exchange-refund-flow/exchange-refund-dashboard";
 import { CheckInModule } from "@/components/cinema/check-in-flow/check-in-module";
-import { DemoSimulatorDock } from "@/components/cinema/demo-simulator-dock";
 import { CinemaAuditoriumBackground } from "@/components/cinema/cinema-auditorium-background";
 import { CinemaLocation, Ticket } from "@/components/cinema/types";
-import { CINEMA_LOCATIONS, SAMPLE_TICKETS } from "@/components/cinema/mock-data";
+import { CINEMA_LOCATIONS, MOVIES, SAMPLE_TICKETS, SHOWTIMES } from "@/components/cinema/mock-data";
+import { useAuth } from "@/components/auth/auth-provider";
 
 export default function CinemaApp() {
+  const { profile, request } = useAuth();
   const [activeTab, setActiveTab] = useState<
     "booking" | "exchange_refund" | "checkin"
   >("booking");
@@ -22,72 +23,74 @@ export default function CinemaApp() {
   const [activeTicketCode, setActiveTicketCode] = useState<string>("STL-894210");
   const [bookingKey, setBookingKey] = useState(0);
 
-  // Simulation & BPMN edge-case state for Demo Dock
-  const [activeSimulation, setActiveSimulation] = useState<string | null>(null);
-  const [forceSingleSeatWarning, setForceSingleSeatWarning] = useState<{
-    seatId: string;
-    row: string;
-    number: number;
-  } | null>(null);
-  const [forceNearShowtime, setForceNearShowtime] = useState<boolean>(false);
-  const [forceU22Surcharge, setForceU22Surcharge] = useState<boolean>(false);
-  const [forceStampSlam, setForceStampSlam] = useState<boolean>(false);
+  useEffect(() => {
+    if (profile?.role !== "CUSTOMER") return;
+    request<Array<Record<string, any>>>("/me/tickets")
+      .then((rows) => setTickets(rows.map((row) => {
+        const movie = MOVIES.find((item) => item.title === row.movie_title) || {
+          id: row.movie_id,
+          title: row.movie_title,
+          director: "Starlight Cinema",
+          cast: "",
+          durationMinutes: row.duration_minutes,
+          releaseDate: "",
+          genres: [],
+          ageRating: row.rating,
+          ageWarning: "",
+          poster: row.poster || "",
+          synopsis: row.description || "",
+          formats: ["2D Phụ đề"],
+          ratingScore: 0,
+          voteCount: 0,
+        } as Ticket["movie"];
+        const showtime = SHOWTIMES.find((item) => item.id === row.showtime_id) || {
+          id: row.showtime_id,
+          movieId: movie.id,
+          cinemaId: row.cinema_id,
+          room: row.room,
+          format: "2D Phụ đề",
+          startsAt: row.starts_at,
+          dateStr: row.starts_at.slice(0, 10),
+          priceRegular: row.price,
+          priceVip: row.price,
+          priceCouple: row.price * 2,
+          totalSeats: 0,
+          availableSeats: 0,
+        } as Ticket["showtime"];
+        return {
+          id: row.id,
+          bookingCode: row.id,
+          phone: profile.phone,
+          customerName: profile.display_name,
+          movie,
+          showtime,
+          cinema: { id: row.cinema_id, name: row.cinema, address: "", city: "", hotline: "1900 1722" },
+          seats: [row.seat_label],
+          seatTypes: { [row.seat_label]: "regular" },
+          u22Count: 0,
+          fnbItems: [],
+          totalPrice: row.value_vnd,
+          status: row.status === "CHECKED_IN" ? "CHECKED_IN" : row.status === "REFUNDED" ? "REFUNDED" : "ELIGIBLE_REFUND",
+          createdAt: row.created_at,
+          popcornStatus: "PICKED_UP",
+          qrToken: row.qrToken,
+          qrImage: row.qrImage,
+          checkedInAt: row.checked_in_at,
+        } as Ticket;
+      })))
+      .catch(() => setTickets([]));
+  }, [profile, request]);
+
+  useEffect(() => {
+    if (profile?.role === "STAFF") window.location.replace("/staff/check-in");
+    if (profile?.role === "MANAGER") window.location.replace("/manager/accounts");
+  }, [profile]);
 
   // Reset to Home / Step 1 on logo click
   const handleGoHome = () => {
     setActiveTab("booking");
     setBookingKey((prev) => prev + 1);
-    handleResetSimulation();
     window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  // Demo Simulation Triggers
-  const handleTriggerSingleSeatError = () => {
-    setActiveSimulation("single_seat");
-    setActiveTab("booking");
-    setForceSingleSeatWarning({ seatId: "E05", row: "E", number: 5 });
-    setForceNearShowtime(false);
-    setForceU22Surcharge(false);
-    setForceStampSlam(false);
-    window.scrollTo({ top: 380, behavior: "smooth" });
-  };
-
-  const handleTriggerNearShowtime = () => {
-    setActiveSimulation("near_showtime");
-    setActiveTab("exchange_refund");
-    setForceNearShowtime(true);
-    setForceSingleSeatWarning(null);
-    setForceU22Surcharge(false);
-    setForceStampSlam(false);
-    window.scrollTo({ top: 300, behavior: "smooth" });
-  };
-
-  const handleTriggerU22Surcharge = () => {
-    setActiveSimulation("u22_surcharge");
-    setActiveTab("checkin");
-    setForceU22Surcharge(true);
-    setForceSingleSeatWarning(null);
-    setForceNearShowtime(false);
-    setForceStampSlam(false);
-    window.scrollTo({ top: 300, behavior: "smooth" });
-  };
-
-  const handleTriggerCompleteCheckin = () => {
-    setActiveSimulation("checkin_stamp");
-    setActiveTab("checkin");
-    setForceStampSlam(true);
-    setForceSingleSeatWarning(null);
-    setForceNearShowtime(false);
-    setForceU22Surcharge(false);
-    window.scrollTo({ top: 300, behavior: "smooth" });
-  };
-
-  const handleResetSimulation = () => {
-    setActiveSimulation(null);
-    setForceSingleSeatWarning(null);
-    setForceNearShowtime(false);
-    setForceU22Surcharge(false);
-    setForceStampSlam(false);
   };
 
   // Add newly created ticket from booking flow
@@ -100,22 +103,6 @@ export default function CinemaApp() {
   const handleUpdateTicket = (updatedTicket: Ticket) => {
     setTickets((prev) =>
       prev.map((t) => (t.id === updatedTicket.id ? updatedTicket : t))
-    );
-  };
-
-  // Check-in action from Kiosk/Staff
-  const handleCheckInTicket = (ticketId: string) => {
-    setTickets((prev) =>
-      prev.map((t) =>
-        t.id === ticketId
-          ? {
-              ...t,
-              status: "CHECKED_IN",
-              ageVerified: true,
-              checkedInAt: new Date().toISOString(),
-            }
-          : t
-      )
     );
   };
 
@@ -191,7 +178,6 @@ export default function CinemaApp() {
             cinema={selectedCinema}
             onNavigateToCheckin={handleNavigateToCheckin}
             onTicketCreated={handleTicketCreated}
-            forceSingleSeatWarning={forceSingleSeatWarning}
           />
         )}
 
@@ -200,7 +186,6 @@ export default function CinemaApp() {
             tickets={tickets}
             onUpdateTicket={handleUpdateTicket}
             onNavigateToCheckin={handleNavigateToCheckin}
-            forceNearShowtime={forceNearShowtime}
           />
         )}
 
@@ -209,9 +194,6 @@ export default function CinemaApp() {
             tickets={tickets}
             activeTicketCode={activeTicketCode}
             onUpdateTicket={handleUpdateTicket}
-            onCheckInTicket={handleCheckInTicket}
-            forceStampSlam={forceStampSlam}
-            forceU22Surcharge={forceU22Surcharge}
           />
         )}
       </main>
@@ -289,15 +271,6 @@ export default function CinemaApp() {
         </div>
       </footer>
 
-      {/* Floating Demo & BPMN Edge-Case Simulator Dock */}
-      <DemoSimulatorDock
-        onTriggerSingleSeatError={handleTriggerSingleSeatError}
-        onTriggerNearShowtime={handleTriggerNearShowtime}
-        onTriggerU22Surcharge={handleTriggerU22Surcharge}
-        onTriggerCompleteCheckin={handleTriggerCompleteCheckin}
-        activeSimulation={activeSimulation}
-        onResetSimulation={handleResetSimulation}
-      />
     </div>
   );
 }

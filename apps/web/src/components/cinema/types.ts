@@ -97,6 +97,7 @@ export type Ticket = {
   popcornCounter?: string;
   readyInMinutes?: number;
   qrToken: string;
+  qrImage?: string;
   ageVerified?: boolean;
   checkedInAt?: string;
   refundMethod?: "WALLET" | "ORIGINAL_PAYMENT";

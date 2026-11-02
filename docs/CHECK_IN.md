@@ -1,5 +1,7 @@
 # Check-in nhân viên — 02/11/2026
 
+> Tài liệu lịch sử của lượt triển khai check-in trước. Backend mới đã chuyển GATE/COUNTER thành STAFF, bỏ seed/login demo runtime và cách ly dữ liệu cũ. Dùng [BACKEND_API.md](BACKEND_API.md) cho API, lệnh chạy và cấu hình hiện tại; các bước demo dưới đây không còn là hướng dẫn vận hành.
+
 ## Chạy và demo
 
 ```powershell

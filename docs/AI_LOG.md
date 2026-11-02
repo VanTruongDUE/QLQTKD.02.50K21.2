@@ -1,5 +1,17 @@
 # AI Log — 01/11/2026
 
+## Backend ba vai trò — yêu cầu đính kèm ngày 02/11/2026
+
+- Đọc prompt đính kèm, git status (sạch lúc bắt đầu), brief/design, schema, auth, booking, worker, check-in và frontend thực tế. Phát hiện frontend đã đổi sang trang dùng mock-data/useState; giữ nguyên toàn bộ apps/web. Không dùng sub-agent, không commit/push/merge/deploy.
+- Kiểm tra Node 24.14.0, pnpm 10.32.1, Git 2.52.0.windows.1. Docker CLI có nhưng Engine dừng. Đường dẫn Docker mặc định không tồn tại; tìm được cài đặt trong AppData/Local/Programs/DockerDesktop, khởi động ẩn và kiểm chứng Engine 29.9.2. Chỉ chạy PostgreSQL/Mailpit để test.
+- Thêm Operations migration: ba role, khóa/session/profile, phạm vi dữ liệu, bảng yêu cầu/hoàn/phân bổ tiền/nhận combo/audit. Giữ dữ liệu cũ, đánh dấu provenance; khóa tài khoản demo cũ. Thêm ProviderEvents và CatalogProvenance, giữ nguyên tiền/trạng thái/policy lịch sử, cách ly danh mục giả khỏi public và giữ ghế.
+- Bổ sung API hồ sơ, nhân viên/phân công, CRUD danh mục có ràng buộc, tra cứu đơn/vé, combo, audit/reports và bảng quyền. Manager không mặc định có quyền STAFF. CLI bootstrap quản lý dùng cấu hình người vận hành, không mật khẩu mặc định hoặc endpoint tạo manager.
+- Xóa route simulate và webhook demo, chuyển seed vào test-only fixtures, bỏ seed scripts/cấu hình demo. PaymentGateway mặc định fail 503; không tự tạo tiền thật. Giữ core thanh toán để adapter đã xác minh gọi; TestGateway chỉ trong test. SMTP bỏ nội dung/thông tin gửi demo, hỗ trợ cấu hình auth/TLS và không gửi legacy outbox.
+- Thực hiện báo giá/yêu cầu/duyệt/rút/thực thi đổi-hoàn: ba dấu chênh lệch, deadline kiểm tra lại sau khóa, khóa vé/combo, phân bổ nhiều khoản thu, callback idempotent, late payment đối soát, UNKNOWN không tự mở khóa, hoàn một phần giữ khóa. Check-in khóa booking trước vé/suất, lưu audit từ chối có scope và không log QR.
+- Chạy test theo phần. 52 ca đầu qua; bổ sung nâng cấp schema cũ/CLI/tiền đến muộn/hoàn một phần. Có lượt bị ECONNREFUSED vì Docker Engine dừng, không coi ca bị skip là đã qua; khởi động lại rồi 57 ca qua. Thêm kiểm tra catalog legacy và gateway chưa cấu hình; kết quả cuối ở TEST_RESULTS.md.
+- Sửa test cũ vốn gọi simulate/HMAC demo để kiểm tra route đã bị gỡ; kiểm tra timeout bằng fixture cô lập. Sửa kiểm tra chủ đơn trước lỗi thiếu payment adapter. Typecheck API/contracts/web, build backend và lint đã chạy; Git diff apps/web trống. Lệnh format qua PowerShell shim gộp mảng sai, đã chuyển sang execFileSync với argv tách rời và format đúng các file đã sửa.
+- Không áp dụng migration lên DB chính hoặc tạo quản lý bằng thông tin tự bịa. Chưa có adapter nhà cung cấp, SMTP Internet, nhánh sự cố suất đã bán, job đối soát tự động hoặc retry khoản hoàn thất bại sau cam kết; tài liệu nêu rõ thay vì tuyên bố production-ready.
+
 ## Bổ sung ngày 02/11/2026 — check-in nhân viên
 
 - Yêu cầu thực tế: tiếp tục dự án, đọc hai tài liệu trong docs và mã nguồn trước khi sửa; hoàn thiện check-in, camera, mã nhập tay, kiểm tra trạng thái/suất, chống trùng, nhật ký và demo/test. Đã giữ nguyên luồng thanh toán/giữ ghế và dùng Next/Nest/TypeORM/contracts/Playwright theo vai trò sẵn có.

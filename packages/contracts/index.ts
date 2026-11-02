@@ -1,8 +1,10 @@
 import { z } from "zod";
-export const credentialsSchema = z.object({
-  email: z.email().max(200),
-  password: z.string().min(12).max(128),
-});
+export const credentialsSchema = z
+  .object({
+    email: z.email().max(200),
+    password: z.string().min(12).max(128),
+  })
+  .strict();
 export const holdSchema = z.object({
   showtimeId: z.uuid(),
   seatIds: z
@@ -33,7 +35,7 @@ export const eventSchema = z.object({
   currency: z.literal("VND"),
   status: z.enum(["SUCCEEDED", "FAILED"]),
 });
-export type Role = "CUSTOMER" | "COUNTER" | "GATE" | "MANAGER";
+export type Role = "CUSTOMER" | "STAFF" | "MANAGER";
 export type Principal = { id: string; role: Role; sessionId: string };
 
 const checkInFields = {
@@ -68,10 +70,18 @@ export type CheckInTicket = {
 export type GateShowtime = {
   id: string;
   title: string;
+  description: string;
+  duration_minutes: number;
+  rating: string;
+  poster: string;
   starts_at: string;
+  ends_at: string;
   room: string;
   cinema: string;
   status: string;
+  ticketCount: number;
+  eligibleTicketCount: number;
+  checkedInCount: number;
   checkInOpensAt: string;
   checkInClosesAt: string;
 };

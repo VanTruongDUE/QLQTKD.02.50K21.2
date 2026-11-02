@@ -1,19 +1,28 @@
 import { source } from "./database/source";
 import { BookingService } from "./booking.service";
 import nodemailer from "nodemailer";
+import { ChangesService } from "./changes";
+import { required } from "./config";
 export async function tick() {
   const service = new BookingService(source);
   await service.expire();
-  if (!process.env.SMTP_HOST) return;
+  await new ChangesService(source).expire();
+  if (!process.env.SMTP_HOST || !process.env.SMTP_FROM) return;
   const transport = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 1025),
-    secure: false,
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: process.env.SMTP_SECURE === "true",
+    requireTLS:
+      process.env.NODE_ENV === "production" &&
+      process.env.SMTP_SECURE !== "true",
+    auth: process.env.SMTP_USER
+      ? { user: process.env.SMTP_USER, pass: required("SMTP_PASSWORD") }
+      : undefined,
     connectionTimeout: 5000,
     socketTimeout: 5000,
   });
   const rows = await source.query(
-    `WITH claimed AS (UPDATE outbox_events SET status='PROCESSING',next_attempt_at=clock_timestamp()+interval '1 minute' WHERE id IN (SELECT id FROM outbox_events WHERE status IN ('PENDING','PROCESSING') AND next_attempt_at<=clock_timestamp() ORDER BY next_attempt_at FOR UPDATE SKIP LOCKED LIMIT 10) RETURNING *) SELECT * FROM claimed`,
+    `WITH claimed AS (UPDATE outbox_events SET status='PROCESSING',next_attempt_at=clock_timestamp()+interval '1 minute' WHERE id IN (SELECT o.id FROM outbox_events o JOIN bookings b ON b.id=o.booking_id WHERE b.provenance='OPERATIONAL' AND o.status IN ('PENDING','PROCESSING') AND o.next_attempt_at<=clock_timestamp() ORDER BY o.next_attempt_at FOR UPDATE OF o SKIP LOCKED LIMIT 10) RETURNING *) SELECT * FROM claimed`,
   );
   for (const row of rows) {
     try {
@@ -22,11 +31,11 @@ export async function tick() {
         [row.booking_id],
       );
       await transport.sendMail({
-        from: "Starlight Demo <tickets@starlight.demo>",
+        from: required("SMTP_FROM"),
         to: booking.email,
         subject: "Vé Starlight của bạn đã sẵn sàng",
-        text: `Đơn ${row.booking_id} đã xác nhận. Tổng tiền ${booking.total} VND (thử nghiệm). Xem QR trong mục Vé của tôi tại ${process.env.WEB_ORIGIN}.`,
-        messageId: `<${row.id}@starlight.demo>`,
+        text: `Đơn ${row.booking_id} đã xác nhận. Khoản thanh toán của đơn: ${booking.total} VND. Xem vé hiện hành trong mục Vé của tôi tại ${required("WEB_ORIGIN")}.`,
+        messageId: `<${row.id}@${new URL(required("WEB_ORIGIN")).hostname}>`,
       });
       await source.query(
         `UPDATE outbox_events SET status='SENT',attempts=attempts+1,last_error=NULL WHERE id=$1`,

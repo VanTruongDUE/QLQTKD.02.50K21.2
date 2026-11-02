@@ -38,7 +38,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
   async validate(payload: { sub: string; sid: string }) {
     const [user] = await this.db.query(
-      `SELECT u.id,u.role,s.id AS "sessionId" FROM users u JOIN refresh_sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.id=$2 AND NOT s.revoked AND s.expires_at>clock_timestamp()`,
+      `SELECT u.id,u.email,u.role,s.id AS "sessionId" FROM users u JOIN refresh_sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.id=$2 AND NOT u.locked AND NOT s.revoked AND s.expires_at>clock_timestamp()`,
       [payload.sub, payload.sid],
     );
     if (!user) throw new UnauthorizedException();
@@ -79,7 +79,7 @@ export class AuthService {
     const [user] = await this.db.query("SELECT * FROM users WHERE email=$1", [
       email.toLowerCase(),
     ]);
-    if (!user || !verifyPassword(password, user.password_hash))
+    if (!user || user.locked || !verifyPassword(password, user.password_hash))
       fail("INVALID_CREDENTIALS", "Email hoặc mật khẩu không đúng.", 401);
     const token = randomBytes(32).toString("base64url");
     const [session] = await this.db.query(
@@ -104,6 +104,8 @@ export class AuthService {
       const [user] = await m.query("SELECT * FROM users WHERE id=$1", [
         session.user_id,
       ]);
+      if (!user || user.locked)
+        fail("SESSION_EXPIRED", "Tài khoản đã bị khóa.", 401);
       const next = randomBytes(32).toString("base64url");
       await m.query("UPDATE refresh_sessions SET token_hash=$1 WHERE id=$2", [
         hash(next),

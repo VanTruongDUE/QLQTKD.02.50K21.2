@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { AuthProvider } from "@/components/auth/auth-provider";
 
 export const metadata: Metadata = {
   title: "Starlight Cinema — Hệ thống Rạp chiếu phim & Giải trí đỉnh cao",
@@ -30,7 +31,7 @@ export default function RootLayout({
         />
       </head>
       <body className="bg-[#0B0C10] text-[#F8FAFC] min-h-screen selection:bg-[#EC4899] selection:text-white antialiased">
-        {children}
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );

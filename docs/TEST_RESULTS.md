@@ -1,5 +1,33 @@
 # Kết quả kiểm thử thực tế
 
+## Backend ba vai trò — kết quả cuối ngày 02/11/2026
+
+Lượt cập nhật này thay thế hướng dẫn demo runtime ở các mục lịch sử bên dưới. Không chỉnh sửa apps/web, không commit/push/merge/deploy, không áp dụng migration lên database chính.
+
+| Kiểm tra | Kết quả |
+| --- | --- |
+| `pnpm test` | **58/58 qua**, 3 file: 18 booking, 20 check-in, 20 operations; lần cuối 20:47:43, 27,01 giây |
+| `pnpm --filter @starlight/api build` | Exit 0 |
+| `pnpm typecheck` | Contracts, API và web đều qua |
+| `pnpm lint` | Exit 0, lượt cuối không có warning |
+| `git diff --exit-code -- apps/web` | Exit 0, không có thay đổi frontend |
+| Migration/CLI | Schema cũ → Operations/ProviderEvents/CatalogProvenance trong schema riêng thuộc starlight_test; kiểm tra giữ tiền/policy/UUID/phân công, khóa tài khoản/session cũ; bootstrap thành công một lần và từ chối lần tiếp theo |
+| SMTP | Outbox gửi tới Mailpit local; không gửi lại event SENT; không chứng minh SMTP Internet |
+
+Đã kiểm chứng các ca chính:
+
+- Chỉ CUSTOMER/STAFF/MANAGER; khách không đọc đơn/vé người khác, không chọn role qua register/profile, không gọi staff/admin. STAFF không phê duyệt, không truy cập ngoài rạp. MANAGER không được check-in. Khóa tài khoản làm token/refresh cũ thất bại, thay role/phân công có hiệu lực ngay.
+- Catalog có scope, không trùng lịch, không sửa suất đã có hold, không đổi sơ đồ ghế đã có lịch. Nhận combo đồng thời chỉ một thành công; combo có khóa hoàn không được giao.
+- Giữ ghế tranh chấp, các giỏ giao nhau, hết hạn/retry, callback lặp/sai số tiền, tiền đến muộn và SMTP của bộ booking được giữ. Demo simulate và HMAC webhook trả 404; không coi test này là xác minh chữ ký cổng thật.
+- Check-in mã tay/QR, sai suất/trạng thái/thời gian/quyền/rạp, trùng và đồng thời. Yêu cầu đổi/hoàn có khóa chặn check-in; worker hết hạn rồi gỡ khóa đúng yêu cầu mới cho vé còn hợp lệ vào phòng.
+- Đổi ngang giá nhiều vé, đổi tăng giá rồi hoàn từ hai nguồn thu, hoàn chênh lệch thất bại vẫn giữ vé mới, hoàn vé/combo chỉ sau callback đã xác minh. Duyệt chưa tạo kết quả hoàn thành; callback hoàn trùng chỉ ghi một sự kiện; hoàn chưa rõ/hoàn một phần không tự mở lại vé.
+- Giá đổi làm quote cũ không hợp lệ; mốc đúng 60 phút được chấp nhận, dưới mốc bị chặn. Người lập không tự duyệt; yêu cầu muộn bị hết hạn. Thanh toán chênh lệch đến muộn không lấy ghế người khác, tạo đối soát cần quản lý duyệt.
+- Catalogue legacy bị ẩn và không giữ ghế được; đơn legacy không trở thành tiền thật. Gateway mặc định không xử lý sự kiện tiền; endpoint thanh toán đúng chủ trả 503 khi thiếu adapter và không tạo payment giả.
+
+Test tiền dùng TestGateway và dữ liệu cô lập trong starlight_test, không có route fake trong runtime. Các test thêm fixture/schema mới, không reset database chính. Có một lượt test bị lỗi ECONNREFUSED vì Docker Engine dừng; toàn bộ ca bị skip của lượt đó không tính thành công. Sau khởi động lại đã chạy lại và đạt số liệu trên.
+
+Chưa kiểm chứng/triển khai: provider sandbox/production và chữ ký riêng nhà cung cấp, SMTP Internet, frontend E2E với API mới, tải nhiều instance, migration trên database chính, sự cố suất đã bán, job đối soát tự động và gửi lại khoản hoàn FAILED sau khi đã đổi/hoàn một phần. Các trường hợp chưa giải quyết được giữ RECONCILIATION_REQUIRED và không giả hoàn tất. Chi tiết API, cấu hình còn thiếu và phương án dữ liệu cũ: [BACKEND_API.md](BACKEND_API.md).
+
 ## Cập nhật check-in — 02/11/2026
 
 Đã đọc lại brief/design và giữ luồng đặt vé hiện có. Bản Docker mới chứa route `/staff/check-in`, QR camera, mã vé đầy đủ, phân quyền GATE/phân công rạp và giao dịch xác nhận nguyên tử.

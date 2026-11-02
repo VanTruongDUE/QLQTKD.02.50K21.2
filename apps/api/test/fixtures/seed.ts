@@ -1,10 +1,20 @@
-import { source } from "./source";
-import { hashPassword } from "../security";
-import { required } from "../config";
+import { source } from "../../src/database/source";
+import { hashPassword } from "../../src/security";
+import { required } from "../../src/config";
 export async function seed(db = source) {
-  if (process.env.NODE_ENV === "production")
+  if (
+    process.env.NODE_ENV !== "test" ||
+    !new URL(
+      String(db.options.type === "postgres" ? db.options.url : ""),
+    ).pathname.endsWith("/starlight_test")
+  )
     throw new Error("Demo seed is disabled in production");
   const password = required("DEMO_PASSWORD");
+  for(const table of ['cinemas','movies','products','auditoriums','showtimes'])await db.query(`UPDATE ${table} SET provenance='OPERATIONAL'`);
+  await db.query(
+    "UPDATE users SET locked=false,password_hash=$1 WHERE email LIKE '%@starlight.demo'",
+    [hashPassword(password)],
+  );
   if (password.length < 12)
     throw new Error("Demo password must have at least 12 characters");
   await db.transaction(async (m) => {
@@ -19,8 +29,8 @@ export async function seed(db = source) {
     for (const [email, role] of [
       ["khach@starlight.demo", "CUSTOMER"],
       ["khach2@starlight.demo", "CUSTOMER"],
-      ["quay@starlight.demo", "COUNTER"],
-      ["soatve@starlight.demo", "GATE"],
+      ["quay@starlight.demo", "STAFF"],
+      ["soatve@starlight.demo", "STAFF"],
       ["quanly@starlight.demo", "MANAGER"],
     ]) {
       const [u] = await m.query(

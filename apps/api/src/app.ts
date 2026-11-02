@@ -7,6 +7,9 @@ import { databaseOptions } from "./database/source";
 import { AuthModule } from "./auth";
 import { CinemaModule } from "./cinema";
 import { CheckInModule } from "./check-in";
+import { OperationsModule } from "./operations";
+import { ChangesModule } from "./changes";
+import { ReconciliationModule } from "./reconciliation";
 @Module({
   imports: [
     TypeOrmModule.forRoot(databaseOptions),
@@ -14,6 +17,9 @@ import { CheckInModule } from "./check-in";
     AuthModule,
     CinemaModule,
     CheckInModule,
+    OperationsModule,
+    ChangesModule,
+    ReconciliationModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

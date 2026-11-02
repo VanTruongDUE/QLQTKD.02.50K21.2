@@ -15,6 +15,23 @@ import { Button } from "./ui/button";
 type Request = <T>(path: string, body?: unknown, key?: string) => Promise<T>;
 const time = (value: string) =>
   new Date(value).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+
+function AssignedShowtimes({ shows, selected, onSelect }: { shows: GateShowtime[]; selected: string; onSelect(id: string): void }) {
+  return <div className="assigned-shows" aria-label="Phim và suất chiếu được phân công">
+    {shows.map((show) => <button type="button" key={show.id} className={selected === show.id ? "assigned-show selected" : "assigned-show"} onClick={() => onSelect(show.id)}>
+      <div className="assigned-show-poster">{show.poster ? <img src={show.poster} alt="" /> : <span>{show.title.slice(0, 1)}</span>}</div>
+      <div className="assigned-show-copy"><strong>{show.title}</strong><span>{time(show.starts_at)} · {show.room}</span><small>{show.cinema} · {show.rating} · {show.duration_minutes} phút</small></div>
+      <div className="assigned-show-progress"><strong>{show.eligibleTicketCount}</strong><span>vé có thể check-in</span><small>{show.checkedInCount}/{show.ticketCount} đã vào rạp</small></div>
+    </button>)}
+  </div>;
+}
+
+function SelectedShow({ show }: { show: GateShowtime }) {
+  return <div className="selected-show-detail">
+    <div><span className="show-label">SUẤT ĐANG SOÁT</span><h3>{show.title}</h3><p>{show.description || "Không có mô tả phim."}</p></div>
+    <dl><div><dt>Rạp · Phòng</dt><dd>{show.cinema} · {show.room}</dd></div><div><dt>Thời gian</dt><dd>{time(show.starts_at)} – {time(show.ends_at)}</dd></div><div><dt>Vé khách đã đặt</dt><dd>{show.ticketCount} vé</dd></div><div><dt>Còn có thể check-in</dt><dd>{show.eligibleTicketCount} vé</dd></div><div><dt>Đã check-in</dt><dd>{show.checkedInCount} vé</dd></div><div><dt>Cửa check-in</dt><dd>{time(show.checkInOpensAt)} – {time(show.checkInClosesAt)}</dd></div></dl>
+  </div>;
+}
 export function CheckInDesk({
   request,
   userId,
@@ -58,6 +75,8 @@ export function CheckInDesk({
         {shows.data?.length === 0 && (
           <p>Không có suất chiếu trong rạp được phân công.</p>
         )}
+        {shows.data && <AssignedShowtimes shows={shows.data} selected={showtimeId} onSelect={setShowtimeId} />}
+        {show && <SelectedShow show={show} />}
         {show && (
           <p>
             <strong>
@@ -153,6 +172,7 @@ function GateSession({
       await cache.invalidateQueries({
         queryKey: ["gate-history", userId, show.id],
       });
+      await cache.invalidateQueries({ queryKey: ["gate-shows", userId] });
     } catch (cause) {
       setError((cause as Error).message);
       if ("status" in (cause as object)) {

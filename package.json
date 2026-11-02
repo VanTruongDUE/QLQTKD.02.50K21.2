@@ -7,7 +7,6 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "db:migrate": "pnpm --filter @starlight/api db:migrate",
-    "db:seed": "pnpm --filter @starlight/api db:seed",
     "test": "pnpm --filter @starlight/api test",
     "test:e2e": "playwright test",
     "lint": "oxlint apps packages",

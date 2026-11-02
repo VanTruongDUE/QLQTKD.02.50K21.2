@@ -1,12 +1,18 @@
+import { TestGateway } from "../gateway";
 import { randomUUID } from "node:crypto";
-import { source } from "./source";
+import { source } from "../../src/database/source";
 import { seed } from "./seed";
-import { hashPassword } from "../security";
-import { required } from "../config";
-import { BookingService } from "../booking.service";
+import { hashPassword } from "../../src/security";
+import { required } from "../../src/config";
+import { BookingService } from "../../src/booking.service";
 
 export async function seedCheckIn(db = source) {
-  if (process.env.NODE_ENV === "production")
+  if (
+    process.env.NODE_ENV !== "test" ||
+    !new URL(
+      String(db.options.type === "postgres" ? db.options.url : ""),
+    ).pathname.endsWith("/starlight_test")
+  )
     throw new Error("Check-in demo is development/test only");
   await seed(db);
   const [cinema] = await db.query(
@@ -17,7 +23,7 @@ export async function seedCheckIn(db = source) {
   );
   for (const [email, role] of [
     ["checkin@starlight.demo", "CUSTOMER"],
-    ["soatve2@starlight.demo", "GATE"],
+    ["soatve2@starlight.demo", "STAFF"],
   ]) {
     await db.query(
       "INSERT INTO users(email,password_hash,role) VALUES($1,$2,$3) ON CONFLICT(email) DO NOTHING",
@@ -28,7 +34,7 @@ export async function seedCheckIn(db = source) {
     "SELECT id FROM users WHERE email='checkin@starlight.demo'",
   );
   const gates = await db.query(
-    "SELECT id,email FROM users WHERE email IN ('soatve@starlight.demo','soatve2@starlight.demo') AND role='GATE' ORDER BY email",
+    "SELECT id,email FROM users WHERE email IN ('soatve@starlight.demo','soatve2@starlight.demo') AND role='STAFF' ORDER BY email",
   );
   for (const gate of gates)
     await db.query(
@@ -67,7 +73,7 @@ export async function seedCheckIn(db = source) {
     }
     shows.push({ ...show, room: roomName, seatIds });
   }
-  const service = new BookingService(db);
+  const service = new BookingService(db, new TestGateway());
   const tickets: Record<
     string,
     { id: string; showtimeId: string; seat: string }
