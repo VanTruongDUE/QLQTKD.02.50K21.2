@@ -197,7 +197,7 @@ export function CustomerETicket({
             <div className="max-w-[190px] mx-auto p-3 rounded-xl bg-white shadow-md relative group">
               <div className="relative aspect-square w-full bg-zinc-900 rounded-lg p-2 flex items-center justify-center overflow-hidden">
                 <img
-                  src={ticket.qrImage || `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(ticket.qrToken)}`}
+                  src={ticket.qrImage || (ticket.qrToken ? `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(ticket.qrToken)}` : "")}
                   alt="Mã QR Soát Vé"
                   className="w-full h-full object-contain filter contrast-125"
                 />

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Search,
   RotateCcw,
@@ -14,8 +14,10 @@ import {
   Loader2,
   Lock,
   AlertTriangle,
+  Receipt,
 } from "lucide-react";
 import { Ticket, TicketStatus } from "../types";
+import { useAuth } from "@/components/auth/auth-provider";
 
 interface ExchangeRefundDashboardProps {
   tickets: Ticket[];
@@ -43,6 +45,118 @@ export function ExchangeRefundDashboard({
   const [refundReason, setRefundReason] = useState("Bận việc đột xuất không thể sắp xếp");
   const [refundMethod, setRefundMethod] = useState<"WALLET" | "ORIGINAL">("WALLET");
   const [refundStep, setRefundStep] = useState<number>(0); // 0 = not started, 1=sending, 2=validating, 3=releasing, 4=done
+
+  // Backend Integration State (Mục 3)
+  const { profile, request } = useAuth();
+  const [changeRequests, setChangeRequests] = useState<any[]>([]);
+  const [currentQuote, setCurrentQuote] = useState<{
+    value: number;
+    newValue: number;
+    payable: number;
+    refundable: number;
+    fee: number;
+    quoteHash: string;
+    expiresAt: string;
+  } | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState("");
+  const [actionLoading, setActionLoading] = useState(false);
+  const [availableShowtimes, setAvailableShowtimes] = useState<any[]>([]);
+  const [selectedTargetShowtime, setSelectedTargetShowtime] = useState<any | null>(null);
+  const [selectedTargetSeat, setSelectedTargetSeat] = useState<any | null>(null);
+
+  const loadChangeRequests = useCallback(async () => {
+    if (!profile) return;
+    try {
+      const data = await request<any[]>("/change-requests");
+      if (Array.isArray(data)) {
+        setChangeRequests(data);
+      }
+    } catch {
+      // Ignored
+    }
+  }, [profile, request]);
+
+  useEffect(() => {
+    loadChangeRequests();
+  }, [loadChangeRequests]);
+
+  // Quote & Alternative showtimes fetch when modal opens or tab changes
+  useEffect(() => {
+    if (!activeModalTicket) {
+      setCurrentQuote(null);
+      setQuoteError("");
+      return;
+    }
+
+    const isRealUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(activeModalTicket.id);
+    if (!profile || !isRealUuid) return;
+
+    let isCancelled = false;
+    async function fetchQuote() {
+      if (!activeModalTicket) return;
+      setQuoteLoading(true);
+      setQuoteError("");
+      try {
+        if (activeTabBranch === "refund") {
+          const q = await request<any>("/change-quotes", {
+            method: "POST",
+            body: JSON.stringify({
+              kind: "REFUND",
+              ticketIds: [activeModalTicket.id],
+              productItemIds: [],
+            }),
+          });
+          if (!isCancelled) setCurrentQuote(q);
+        } else if (activeTabBranch === "exchange") {
+          const showRes = await fetch("/api/v1/showtimes");
+          if (showRes.ok) {
+            const rawShows = await showRes.json();
+            const matching = (rawShows || []).filter(
+              (s: any) =>
+                (s.movie_id === activeModalTicket.movie.id ||
+                 s.movie_title?.toLowerCase().trim() === activeModalTicket.movie.title.toLowerCase().trim()) &&
+                s.id !== activeModalTicket.showtime.id
+            );
+            if (!isCancelled) setAvailableShowtimes(matching);
+
+            if (matching.length > 0) {
+              const target = matching[0];
+              if (!isCancelled) setSelectedTargetShowtime(target);
+              const seatRes = await fetch(`/api/v1/showtimes/${target.id}/seats`);
+              if (seatRes.ok) {
+                const seatData = await seatRes.json();
+                const avail = (seatData?.seats || []).find((st: any) => st.status === "AVAILABLE");
+                if (avail && !isCancelled) {
+                  setSelectedTargetSeat(avail);
+                  const q = await request<any>("/change-quotes", {
+                    method: "POST",
+                    body: JSON.stringify({
+                      kind: "EXCHANGE",
+                      ticketIds: [activeModalTicket.id],
+                      productItemIds: [],
+                      targetShowtimeId: target.id,
+                      seatIds: [avail.id],
+                    }),
+                  });
+                  if (!isCancelled) setCurrentQuote(q);
+                }
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        if (!isCancelled) setQuoteError(err?.message || "Không thể tải báo giá đổi/hoàn vé.");
+      } finally {
+        if (!isCancelled) setQuoteLoading(false);
+      }
+    }
+
+    fetchQuote();
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeModalTicket, activeTabBranch, profile, request]);
 
   const filteredTickets = tickets.filter((t) => {
     const q = searchQuery.trim().toLowerCase();
@@ -91,33 +205,124 @@ export function ExchangeRefundDashboard({
     }
   };
 
-  // Perform Exchange
-  const handleConfirmExchange = () => {
+  // Perform Real / Simulated Exchange (Mục 3)
+  const handleConfirmExchange = async () => {
     if (!activeModalTicket) return;
-    const updated: Ticket = {
-      ...activeModalTicket,
-      bookingCode: `${activeModalTicket.bookingCode}-EX1`,
-      showtime: {
-        ...activeModalTicket.showtime,
-        startsAt: newShowtimeTime,
-      },
-    };
-    onUpdateTicket(updated);
-    setExchangeSuccess(true);
-    setTimeout(() => {
-      setExchangeSuccess(false);
-      setActiveModalTicket(null);
-    }, 1800);
+    setActionLoading(true);
+    setQuoteError("");
+
+    const isRealUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(activeModalTicket.id);
+
+    try {
+      if (profile && isRealUuid && selectedTargetShowtime && selectedTargetSeat) {
+        const reqResult = await request<any>("/change-requests", {
+          method: "POST",
+          headers: { "idempotency-key": `ex-${activeModalTicket.id}-${Date.now()}` },
+          body: JSON.stringify({
+            kind: "EXCHANGE",
+            ticketIds: [activeModalTicket.id],
+            productItemIds: [],
+            targetShowtimeId: selectedTargetShowtime.id,
+            seatIds: [selectedTargetSeat.id],
+            quoteHash: currentQuote?.quoteHash || "",
+            customerConfirmed: true,
+          }),
+        });
+
+        if (reqResult?.id && reqResult.status === "APPROVED") {
+          await request<any>(`/change-requests/${reqResult.id}/execute`, {
+            method: "POST",
+            headers: { "idempotency-key": `exec-${reqResult.id}-${Date.now()}` },
+          });
+        }
+
+        loadChangeRequests();
+      }
+
+      const updated: Ticket = {
+        ...activeModalTicket,
+        bookingCode: `${activeModalTicket.bookingCode}-EX1`,
+        showtime: selectedTargetShowtime
+          ? {
+              ...activeModalTicket.showtime,
+              id: selectedTargetShowtime.id,
+              room: selectedTargetShowtime.room || activeModalTicket.showtime.room,
+              startsAt: selectedTargetShowtime.startsAt || newShowtimeTime,
+            }
+          : {
+              ...activeModalTicket.showtime,
+              startsAt: newShowtimeTime,
+            },
+        seats: selectedTargetSeat ? [selectedTargetSeat.label] : activeModalTicket.seats,
+      };
+
+      onUpdateTicket(updated);
+      setExchangeSuccess(true);
+      setTimeout(() => {
+        setExchangeSuccess(false);
+        setActiveModalTicket(null);
+      }, 1800);
+    } catch (err: any) {
+      console.error("Exchange execution error:", err);
+      setQuoteError(err?.message || "Không thể thực hiện đổi suất chiếu.");
+    } finally {
+      setActionLoading(false);
+    }
   };
 
-  // Perform Refund Simulation
-  const handleStartRefund = () => {
+  // Perform Real / Simulated Refund (Mục 3)
+  const handleStartRefund = async () => {
     if (!activeModalTicket) return;
+    setQuoteError("");
     setRefundStep(1);
 
-    setTimeout(() => setRefundStep(2), 700);
-    setTimeout(() => setRefundStep(3), 1500);
-    setTimeout(() => {
+    const isRealUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(activeModalTicket.id);
+
+    try {
+      if (profile && isRealUuid) {
+        let q = currentQuote;
+        if (!q) {
+          q = await request<any>("/change-quotes", {
+            method: "POST",
+            body: JSON.stringify({
+              kind: "REFUND",
+              ticketIds: [activeModalTicket.id],
+              productItemIds: [],
+            }),
+          });
+          setCurrentQuote(q);
+        }
+
+        setRefundStep(2);
+        const reqResult = await request<any>("/change-requests", {
+          method: "POST",
+          headers: { "idempotency-key": `ref-${activeModalTicket.id}-${Date.now()}` },
+          body: JSON.stringify({
+            kind: "REFUND",
+            ticketIds: [activeModalTicket.id],
+            productItemIds: [],
+            quoteHash: q?.quoteHash || "",
+            customerConfirmed: true,
+          }),
+        });
+
+        setRefundStep(3);
+        if (reqResult?.id && reqResult.status === "APPROVED") {
+          await request<any>(`/change-requests/${reqResult.id}/execute`, {
+            method: "POST",
+            headers: { "idempotency-key": `exec-${reqResult.id}-${Date.now()}` },
+          });
+        }
+
+        loadChangeRequests();
+      } else {
+        await new Promise((r) => setTimeout(r, 600));
+        setRefundStep(2);
+        await new Promise((r) => setTimeout(r, 800));
+        setRefundStep(3);
+        await new Promise((r) => setTimeout(r, 900));
+      }
+
       setRefundStep(4);
       const updated: Ticket = {
         ...activeModalTicket,
@@ -125,11 +330,15 @@ export function ExchangeRefundDashboard({
         refundMethod: refundMethod === "WALLET" ? "WALLET" : "ORIGINAL_PAYMENT",
         refundedAmount:
           refundMethod === "WALLET"
-            ? activeModalTicket.totalPrice
-            : Math.round(activeModalTicket.totalPrice * 0.9),
+            ? (currentQuote?.refundable || activeModalTicket.totalPrice)
+            : Math.round((currentQuote?.refundable || activeModalTicket.totalPrice) * 0.9),
       };
       onUpdateTicket(updated);
-    }, 2400);
+    } catch (err: any) {
+      console.error("Refund execution error:", err);
+      setQuoteError(err?.message || "Không thể thực hiện hoàn vé.");
+      setRefundStep(0);
+    }
   };
 
   return (
@@ -455,49 +664,73 @@ export function ExchangeRefundDashboard({
             {activeTabBranch === "exchange" && (
               <div className="space-y-3.5">
                 <p className="text-xs text-zinc-300">
-                  Chọn suất chiếu mới cho phim <strong>{activeModalTicket.movie.title}</strong> hôm nay:
+                  Chọn suất chiếu mới cho phim <strong>{activeModalTicket.movie.title}</strong>:
                 </p>
 
-                {/* Showtime Selector */}
-                <div className="grid grid-cols-3 gap-2.5">
-                  {[
-                    { time: "21:30", room: "Phòng 02", diff: 0 },
-                    { time: "22:15", room: "Phòng 03 VIP", diff: 20000 },
-                    { time: "23:45", room: "Phòng 01", diff: -15000 },
-                  ].map((s) => (
-                    <button
-                      key={s.time}
-                      onClick={() => setNewShowtimeTime(s.time)}
-                      className={`p-2.5 rounded-lg border text-left transition-colors cursor-pointer ${
-                        newShowtimeTime === s.time
-                          ? "bg-zinc-800 border-zinc-700 text-white shadow-sm ring-1 ring-zinc-700"
-                          : "bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-850"
-                      }`}
-                    >
-                      <div className="text-sm font-bold text-white">{s.time}</div>
-                      <div className="text-[10px] text-zinc-400">{s.room}</div>
-                      <div className="text-[10px] text-emerald-400 font-semibold mt-0.5">
-                        {s.diff > 0 ? `+${s.diff.toLocaleString("vi-VN")}đ` : s.diff < 0 ? `${s.diff.toLocaleString("vi-VN")}đ` : "Cùng giá"}
-                      </div>
-                    </button>
-                  ))}
+                {/* Showtime Selector from PostgreSQL or fallback */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {(availableShowtimes.length > 0
+                    ? availableShowtimes
+                    : [
+                        { id: "alt-1", startsAt: "21:30", room: "Phòng 02 · Dolby 7.1", price: activeModalTicket.totalPrice },
+                        { id: "alt-2", startsAt: "22:15", room: "Phòng 03 · Starlight VIP", price: activeModalTicket.totalPrice + 20000 },
+                        { id: "alt-3", startsAt: "23:45", room: "Phòng 01 · Starlight VIP", price: activeModalTicket.totalPrice },
+                      ]
+                  ).map((s: any) => {
+                    const timeLabel = s.startsAt || new Date(s.starts_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+                    const isSelected = selectedTargetShowtime?.id === s.id || newShowtimeTime === timeLabel;
+                    const diff = (s.price || activeModalTicket.totalPrice) - activeModalTicket.totalPrice;
+
+                    return (
+                      <button
+                        key={s.id || timeLabel}
+                        onClick={() => {
+                          setSelectedTargetShowtime(s);
+                          setNewShowtimeTime(timeLabel);
+                        }}
+                        className={`p-2.5 rounded-lg border text-left transition-colors cursor-pointer ${
+                          isSelected
+                            ? "bg-zinc-800 border-purple-500 text-white shadow-sm ring-1 ring-purple-500"
+                            : "bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-850"
+                        }`}
+                      >
+                        <div className="text-sm font-bold text-white">{timeLabel}</div>
+                        <div className="text-[10px] text-zinc-400 truncate">{s.room || "Phòng Chiếu"}</div>
+                        <div className="text-[10px] text-emerald-400 font-semibold mt-0.5">
+                          {diff > 0 ? `+${diff.toLocaleString("vi-VN")}đ` : diff < 0 ? `${diff.toLocaleString("vi-VN")}đ` : "Cùng giá (0đ)"}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
 
-                {/* Price Difference Calculator Card */}
+                {/* Price Difference Calculator Card (Real Quote from Backend) */}
                 <div className="p-3.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs space-y-1.5">
                   <div className="flex justify-between text-zinc-400">
                     <span>Giá trị vé cũ:</span>
-                    <span>{activeModalTicket.totalPrice.toLocaleString("vi-VN")}đ</span>
+                    <span>{(currentQuote?.value || activeModalTicket.totalPrice).toLocaleString("vi-VN")}đ</span>
                   </div>
                   <div className="flex justify-between text-zinc-400">
-                    <span>Giá trị suất mới ({newShowtimeTime}):</span>
-                    <span>{(activeModalTicket.totalPrice + 20000).toLocaleString("vi-VN")}đ</span>
+                    <span>Giá trị suất mới:</span>
+                    <span>{(currentQuote?.newValue || activeModalTicket.totalPrice).toLocaleString("vi-VN")}đ</span>
                   </div>
                   <div className="pt-2 border-t border-zinc-800 flex justify-between font-semibold text-xs sm:text-sm">
-                    <span className="text-zinc-200">Chênh lệch cần thanh toán:</span>
-                    <span className="text-rose-400 font-bold">+20.000đ</span>
+                    <span className="text-zinc-200">Chênh lệch thanh toán:</span>
+                    <span className={currentQuote?.payable ? "text-rose-400 font-bold" : "text-emerald-400 font-bold"}>
+                      {currentQuote
+                        ? currentQuote.payable > 0
+                          ? `+${currentQuote.payable.toLocaleString("vi-VN")}đ`
+                          : "0đ (Miễn phí đổi vé)"
+                        : "0đ"}
+                    </span>
                   </div>
                 </div>
+
+                {quoteError && (
+                  <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-[11px]">
+                    ⚠️ {quoteError}
+                  </div>
+                )}
 
                 {exchangeSuccess ? (
                   <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold text-center flex items-center justify-center gap-2">
@@ -506,10 +739,24 @@ export function ExchangeRefundDashboard({
                   </div>
                 ) : (
                   <button
+                    disabled={actionLoading || quoteLoading}
                     onClick={handleConfirmExchange}
-                    className="w-full py-3 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs shadow-sm transition-colors cursor-pointer"
+                    className="w-full py-3 rounded-lg bg-gradient-to-r from-[#A855F7] to-[#EC4899] hover:opacity-95 disabled:opacity-50 text-white font-semibold text-xs shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    Xác Nhận Đổi Suất Chiếu (+20.000đ)
+                    {actionLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Đang xử lý đổi vé trên hệ thống...</span>
+                      </>
+                    ) : (
+                      <span>
+                        Xác Nhận Đổi Suất Chiếu (
+                        {currentQuote?.payable
+                          ? `+${currentQuote.payable.toLocaleString("vi-VN")}đ`
+                          : "Miễn phí"}
+                        )
+                      </span>
+                    )}
                   </button>
                 )}
               </div>
@@ -564,7 +811,7 @@ export function ExchangeRefundDashboard({
                         </span>
                       </div>
                       <div className="text-base font-bold text-emerald-400">
-                        Hoàn 100% ({activeModalTicket.totalPrice.toLocaleString("vi-VN")}đ)
+                        Hoàn 100% ({(currentQuote?.refundable ?? activeModalTicket.totalPrice).toLocaleString("vi-VN")}đ)
                       </div>
                       <p className="text-[11px] text-zinc-400 mt-1">
                         ⚡ Nhận ngay trong <strong>30 giây</strong>. Tặng thêm Voucher 15% bắp nước.
@@ -588,7 +835,7 @@ export function ExchangeRefundDashboard({
                         </span>
                       </div>
                       <div className="text-base font-bold text-zinc-200">
-                        Hoàn 90% ({(activeModalTicket.totalPrice * 0.9).toLocaleString("vi-VN")}đ)
+                        Hoàn 90% ({Math.round((currentQuote?.refundable ?? activeModalTicket.totalPrice) * 0.9).toLocaleString("vi-VN")}đ)
                       </div>
                       <p className="text-[11px] text-zinc-400 mt-1">
                         Khấu trừ 10% phí cổng thanh toán. Nhận sau <strong>3–5 ngày làm việc</strong>.
@@ -596,6 +843,35 @@ export function ExchangeRefundDashboard({
                     </button>
                   </div>
                 </div>
+
+                {/* Refund Quote Breakdown */}
+                <div className="p-3.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs space-y-1.5">
+                  <div className="flex justify-between text-zinc-400">
+                    <span>Giá trị vé hoàn:</span>
+                    <span>{(currentQuote?.value || activeModalTicket.totalPrice).toLocaleString("vi-VN")}đ</span>
+                  </div>
+                  {currentQuote?.fee ? (
+                    <div className="flex justify-between text-zinc-400">
+                      <span>Phí xử lý:</span>
+                      <span className="text-rose-400">-{currentQuote.fee.toLocaleString("vi-VN")}đ</span>
+                    </div>
+                  ) : null}
+                  <div className="pt-2 border-t border-zinc-800 flex justify-between font-semibold text-xs sm:text-sm">
+                    <span className="text-zinc-200">Số tiền hoàn thực nhận:</span>
+                    <span className="text-emerald-400 font-bold">
+                      {refundMethod === "WALLET"
+                        ? `${(currentQuote?.refundable ?? activeModalTicket.totalPrice).toLocaleString("vi-VN")}đ`
+                        : `${Math.round((currentQuote?.refundable ?? activeModalTicket.totalPrice) * 0.9).toLocaleString("vi-VN")}đ`}
+                    </span>
+                  </div>
+                </div>
+
+                {quoteError && (
+                  <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                    <span>{quoteError}</span>
+                  </div>
+                )}
 
                 {/* Animated Refund Timeline Stepper Simulation */}
                 {refundStep > 0 && (
@@ -613,8 +889,8 @@ export function ExchangeRefundDashboard({
                           step: 4,
                           label:
                             refundMethod === "WALLET"
-                              ? `Đã hoàn 100% (${activeModalTicket.totalPrice.toLocaleString("vi-VN")}đ) vào Ví Starlight Pay!`
-                              : `Yêu cầu hoàn ${(activeModalTicket.totalPrice * 0.9).toLocaleString("vi-VN")}đ đã chuyển ngân hàng!`,
+                              ? `Đã hoàn 100% (${(currentQuote?.refundable ?? activeModalTicket.totalPrice).toLocaleString("vi-VN")}đ) vào Ví Starlight Pay!`
+                              : `Yêu cầu hoàn ${Math.round((currentQuote?.refundable ?? activeModalTicket.totalPrice) * 0.9).toLocaleString("vi-VN")}đ đã chuyển ngân hàng!`,
                         },
                       ].map((s) => {
                         const isCompleted = refundStep >= s.step;
@@ -684,7 +960,7 @@ export function ExchangeRefundDashboard({
                   </div>
                 ) : (
                   <button
-                    disabled={refundStep > 0}
+                    disabled={refundStep > 0 || quoteLoading || !!quoteError}
                     onClick={handleStartRefund}
                     className="w-full py-3 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-semibold text-xs shadow-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
                   >
@@ -693,12 +969,17 @@ export function ExchangeRefundDashboard({
                         <Loader2 className="w-4 h-4 animate-spin" />
                         <span>Đang xử lý hoàn tiền tự động...</span>
                       </>
+                    ) : quoteLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Đang tải thông tin báo giá...</span>
+                      </>
                     ) : (
                       <span>
                         Xác Nhận Hủy Vé & Hoàn Tiền (
                         {refundMethod === "WALLET"
-                          ? `${activeModalTicket.totalPrice.toLocaleString("vi-VN")}đ`
-                          : `${(activeModalTicket.totalPrice * 0.9).toLocaleString("vi-VN")}đ`}
+                          ? `${(currentQuote?.refundable ?? activeModalTicket.totalPrice).toLocaleString("vi-VN")}đ`
+                          : `${Math.round((currentQuote?.refundable ?? activeModalTicket.totalPrice) * 0.9).toLocaleString("vi-VN")}đ`}
                         )
                       </span>
                     )}
@@ -707,6 +988,111 @@ export function ExchangeRefundDashboard({
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Change Requests History (Mục 3) */}
+      {profile && (
+        <div className="mt-8 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Receipt className="w-4 h-4 text-purple-400" />
+              <h3 className="text-sm sm:text-base font-bold text-white">
+                Lịch Sử Yêu Cầu Đổi / Hoàn Vé
+              </h3>
+            </div>
+            <button
+              onClick={loadChangeRequests}
+              className="text-xs text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer transition-colors"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>Làm mới</span>
+            </button>
+          </div>
+
+          {changeRequests.length === 0 ? (
+            <div className="p-6 rounded-2xl bg-[#131520] border border-[#222538] text-center text-xs text-zinc-500">
+              Chưa có yêu cầu đổi / hoàn vé nào được ghi nhận trên tài khoản của bạn.
+            </div>
+          ) : (
+            <div className="rounded-2xl bg-[#131520] border border-[#222538] overflow-hidden shadow-lg">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#181B2A] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-[#222538]">
+                    <tr>
+                      <th className="px-4 py-3">Mã Yêu Cầu</th>
+                      <th className="px-4 py-3">Loại Yêu Cầu</th>
+                      <th className="px-4 py-3">Trạng Thái</th>
+                      <th className="px-4 py-3">Số Tiền</th>
+                      <th className="px-4 py-3">Thời Gian</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#222538] text-zinc-300">
+                    {changeRequests.map((cr) => {
+                      const isExchange = cr.kind === "EXCHANGE";
+                      const isDone = cr.status === "COMPLETED" || cr.status === "EXECUTED" || cr.exchange_committed;
+                      const isApproved = cr.status === "APPROVED";
+                      const isPending = cr.status === "PENDING_APPROVAL" || cr.status === "PROCESSING";
+
+                      const statusBadge = isDone
+                        ? { label: "Hoàn tất", cls: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" }
+                        : isApproved
+                        ? { label: "Đã duyệt", cls: "bg-blue-500/15 text-blue-400 border-blue-500/30" }
+                        : isPending
+                        ? { label: "Đang xử lý", cls: "bg-amber-500/15 text-amber-400 border-amber-500/30" }
+                        : { label: cr.status, cls: "bg-zinc-800 text-zinc-400 border-zinc-700" };
+
+                      const amount = cr.quote?.refundable ?? cr.refundable_amount ?? cr.quote?.payable ?? cr.payable_amount ?? 0;
+
+                      return (
+                        <tr key={cr.id} className="hover:bg-[#181B2A]/50 transition-colors">
+                          <td className="px-4 py-3 font-mono text-[11px] text-zinc-300">
+                            {cr.id.slice(0, 8)}...{cr.id.slice(-4)}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
+                                isExchange
+                                  ? "bg-purple-500/15 text-purple-400 border border-purple-500/30"
+                                  : "bg-rose-500/15 text-rose-400 border border-rose-500/30"
+                              }`}
+                            >
+                              {isExchange ? <RefreshCw className="w-2.5 h-2.5" /> : <RotateCcw className="w-2.5 h-2.5" />}
+                              {isExchange ? "Đổi Suất" : "Hoàn Tiền"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${statusBadge.cls}`}>
+                              {statusBadge.label}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 font-mono font-medium">
+                            {isExchange ? (
+                              amount > 0 ? (
+                                <span className="text-rose-400">+{amount.toLocaleString("vi-VN")}đ</span>
+                              ) : (
+                                <span className="text-zinc-400">0đ</span>
+                              )
+                            ) : (
+                              <span className="text-emerald-400">+{amount.toLocaleString("vi-VN")}đ</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-zinc-500 text-[11px]">
+                            {new Date(cr.created_at).toLocaleString("vi-VN", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              day: "2-digit",
+                              month: "2-digit",
+                            })}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

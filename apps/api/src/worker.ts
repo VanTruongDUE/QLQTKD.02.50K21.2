@@ -9,7 +9,7 @@ export async function tick() {
   await service.expire();
   await new ChangesService(source).expire();
 
-  if (process.env.N8N_WEBHOOK_URL) {
+  if (process.env.N8N_WEBHOOK_URL && process.env.NODE_ENV !== "test") {
     const webhookService = new N8nWebhookService();
     const notificationService = new NotificationService(source, webhookService);
     try {
