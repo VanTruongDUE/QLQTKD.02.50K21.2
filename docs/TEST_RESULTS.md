@@ -1,5 +1,29 @@
 # Kết quả kiểm thử thực tế
 
+## Cập nhật check-in — 02/11/2026
+
+Đã đọc lại brief/design và giữ luồng đặt vé hiện có. Bản Docker mới chứa route `/staff/check-in`, QR camera, mã vé đầy đủ, phân quyền GATE/phân công rạp và giao dịch xác nhận nguyên tử.
+
+| Kiểm tra | Kết quả thực tế |
+| --- | --- |
+| Migration | CheckInLocks1793581200000 chạy trên development và test DB |
+| `pnpm test` | **39/39 qua**, lần cuối 10:20:42, 7,64 giây: 18 booking và 21 check-in |
+| `pnpm typecheck`, `pnpm lint` | Exit 0 sau thay đổi cuối |
+| `docker compose --profile full up -d --build` | Build API/Next và frozen lockfile thành công; api/web/worker khởi động lại |
+| `pnpm test:e2e` | **10/10 qua trong 17,5 giây** trên Docker mới: 2 booking, 8 check-in ở Chromium desktop và mobile giả lập |
+| HTTP / dịch vụ | `/staff/check-in` HTTP 200; `/api/v1/health` trả ok; năm dịch vụ Up, PostgreSQL/Mailpit healthy |
+| Giao diện | Đã xem ảnh màn hình staff đăng nhập ở 1440/768/390, không tràn ngang. Inspector ở trạng thái chưa đăng nhập: 0 FAIL/2 WARN do vùng trống của trang yêu cầu đăng nhập; không coi đây là đo toàn bộ màn hình đã xác thực |
+
+Các ca backend mới: inspect mã vé/QR hợp lệ không ghi dữ liệu; QR sai/mã không tồn tại; payload thiếu suất hoặc hai cách nhận diện; sai suất; vé hủy/hoàn/đổi/đã dùng/đang khóa; đơn hủy; suất hủy; chưa đến giờ/quá giờ; bốn mốc trước/tại/sau cửa sổ (đơn vị ms); chưa xác nhận tuổi; thay trạng thái giữa inspect và confirm; hai nhân viên cùng xác nhận; retry cùng key; lịch sử có staff/time; chưa đăng nhập, CUSTOMER, COUNTER, MANAGER; rạp ngoài phạm vi. Test đồng thời kiểm tra HTTP 201/409 và đúng một dòng check_ins/audit trong PostgreSQL.
+
+Các ca browser: nhập mã sai suất và vé vô hiệu → vé hợp lệ → xác nhận tuổi → check-in → lịch sử → từ chối trùng; giải mã QR thật từ canvas video stream giả lập rồi kiểm tra stream đã dừng; camera bị từ chối nhưng vẫn nhập mã được; đổi suất xóa kết quả cũ; khách không thấy điều khiển nhân viên. Bài đặt vé vẫn hoàn tất phim → suất → ghế → thanh toán demo → QR tồn tại sau reload.
+
+Lỗi đã gặp và sửa: selector `getByRole('alert')` còn chọn route announcer ẩn của Next, đã giới hạn vào main; lặp nhiều suite chạm giới hạn đăng nhập, đã giảm login bằng phiên khách riêng trong setup và giữ nguyên rate limit ứng dụng; bài booking luôn chọn suất đầu tiên nên dùng hết ghế suất check-in demo, đã chọn phòng demo đặt vé gốc `Phòng 1`. Khi chạy suite liên tiếp, chờ ít nhất 60 giây sau lần gọi auth cuối để hết cửa sổ rate limit; không vô hiệu hóa guard để test qua.
+
+Chưa kiểm chứng: camera vật lý, Safari/iOS thật, đổi camera trên phần cứng, tải nhiều instance, mất mạng dài hạn, quy trình đổi/hoàn thực tế cạnh tranh với check-in. Vé có trạng thái hoàn/đổi và khóa đang chờ trong fixture là mô phỏng, không phải giao dịch hoàn tiền. Chi tiết demo: [CHECK_IN.md](CHECK_IN.md).
+
+## Bằng chứng lịch sử — 01/11/2026
+
 Ngày 01/11/2026, Windows/PowerShell, PostgreSQL 17 chạy Docker. Đây là bằng chứng demo, không phải SLA, đánh giá tải production hay khảo sát rạp thật.
 
 ## Kiểm tra đã chạy

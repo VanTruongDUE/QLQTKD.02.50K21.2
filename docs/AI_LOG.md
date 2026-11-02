@@ -1,5 +1,18 @@
 # AI Log — 01/11/2026
 
+## Bổ sung ngày 02/11/2026 — check-in nhân viên
+
+- Yêu cầu thực tế: tiếp tục dự án, đọc hai tài liệu trong docs và mã nguồn trước khi sửa; hoàn thiện check-in, camera, mã nhập tay, kiểm tra trạng thái/suất, chống trùng, nhật ký và demo/test. Đã giữ nguyên luồng thanh toán/giữ ghế và dùng Next/Nest/TypeORM/contracts/Playwright theo vai trò sẵn có.
+- Tách CheckInModule khỏi controller cinema cũ; bắt buộc selected showtime và đúng một QR token/mã vé UUID; GATE và phân công rạp được kiểm tra ở backend. Có cửa sổ -30/+15 phút, xác minh tuổi, lý do lỗi riêng, lịch sử thời điểm/nhân viên. Không tạo quyền quản lý vượt quyền soát vé.
+- Confirm khóa booking/showtime/ticket, kiểm tra lại trạng thái và thời gian bằng đồng hồ PostgreSQL, cập nhật có điều kiện, insert check_ins/audit trong cùng transaction. Cùng idempotency key trả biên nhận cũ, hai thao tác khác nhau chỉ một lượt mới. Bổ sung migration khóa nghiệp vụ để chặn vé đang chờ đổi/hoàn; chưa xây workflow đổi/hoàn.
+- Thêm route `/staff/check-in`, camera ZXing tải động, quản lý dừng stream, chọn thiết bị và fallback nhập mã; QR không tự xác nhận. Giữ palette/layout dự án với skill design-taste-frontend. Xem ảnh desktop/tablet/mobile; bổ sung thông tin phòng/phim bên ngoài select để đọc được trên màn hình hẹp. Inspector chỉ đo trạng thái chưa đăng nhập (0 FAIL/2 WARN vùng trống); ảnh xác thực từ Playwright.
+- Seed mới gọi booking/payment demo hiện có để phát hành 12 vé mỗi lần, sau đó mô phỏng các trạng thái lỗi; thêm khách checkin và nhân viên thứ hai. Không xóa dữ liệu cũ, không phục hồi vé đã dùng. README và CHECK_IN.md ghi lệnh seed và phạm vi mô phỏng.
+- Kiểm thử backend 39/39 qua; build/typecheck/lint qua. Browser ban đầu lỗi strict locator do Next route announcer, đã giới hạn selector vào main. Các lần chạy sát nhau chạm rate limit; đã tái sử dụng phiên khách trong setup, không thay guard. Bài booking chọn suất đầu tiên hết ghế do test trước, sửa để chọn phòng đặt vé demo gốc. Kết quả cuối 10/10 browser qua trên Docker mới (17,5 giây).
+- QR thật được decoder đọc từ video canvas giả lập, kiểm tra tắt stream và bước xác nhận thủ công. Không tuyên bố đã thử camera vật lý, Safari/iOS thật hoặc đã hoàn thiện quy trình đổi/hoàn. Đã cập nhật TEST_RESULTS với giới hạn cụ thể. Không dùng sub-agent, không tạo lịch sử tương tác giả.
+- Khi thử lệnh demo cuối trong container, `pnpm db:seed:check-in` không tìm thấy vì thư mục làm việc là workspace root; đã sửa tài liệu dùng `pnpm --filter @starlight/api db:seed:check-in` và chạy lại.
+
+## Nhật ký triển khai ban đầu — 01/11/2026
+
 Đây là nhật ký công việc thực tế trong một yêu cầu triển khai. Không tách thành 10 tương tác người dùng giả hoặc tạo thất bại/commit để đủ rubric.
 
 | Bước                 | Hành động và quyết định                                                                      | Kết quả thực tế / sửa lỗi                                                                                                                                                                   |

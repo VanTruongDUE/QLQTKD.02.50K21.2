@@ -6,12 +6,14 @@ import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
 import { databaseOptions } from "./database/source";
 import { AuthModule } from "./auth";
 import { CinemaModule } from "./cinema";
+import { CheckInModule } from "./check-in";
 @Module({
   imports: [
     TypeOrmModule.forRoot(databaseOptions),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 120 }]),
     AuthModule,
     CinemaModule,
+    CheckInModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

@@ -8,24 +8,25 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.2.0",
+    "@radix-ui/react-slot": "^1.2.3",
+    "@starlight/contracts": "workspace:*",
+    "@tanstack/react-query": "^5.90.0",
+    "@zxing/browser": "^0.2.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
     "next": "^16.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "@starlight/contracts": "workspace:*",
-    "@tanstack/react-query": "^5.90.0",
     "react-hook-form": "^7.65.0",
-    "@hookform/resolvers": "^5.2.0",
-    "zod": "^4.1.0",
-    "lucide-react": "^0.468.0",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
     "tailwind-merge": "^3.3.0",
-    "@radix-ui/react-slot": "^1.2.3"
+    "zod": "^4.1.0"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "tailwindcss": "^4.1.0",
-    "@tailwindcss/postcss": "^4.1.0"
+    "tailwindcss": "^4.1.0"
   }
 }

@@ -419,8 +419,13 @@ describe("HTTP security and check-in", () => {
     expect(ticket.qrImage).toMatch(/^data:image\/png/);
     expect(ticket.qr_hash).toBeUndefined();
     expect(
-      (await http("/check-in/inspect", { token: ticket.qrToken }, gateToken))
-        .status,
+      (
+        await http(
+          "/check-in/inspect",
+          { token: ticket.qrToken, showtimeId: showId },
+          gateToken,
+        )
+      ).status,
     ).toBe(201);
     expect(
       (await db.query("SELECT status FROM tickets WHERE id=$1", [ticket.id]))[0]
@@ -429,13 +434,13 @@ describe("HTTP security and check-in", () => {
     const results = await Promise.all([
       http(
         "/check-in/confirm",
-        { token: ticket.qrToken, ageVerified: true },
+        { token: ticket.qrToken, showtimeId: showId, ageVerified: true },
         gateToken,
         { "Idempotency-Key": key() },
       ),
       http(
         "/check-in/confirm",
-        { token: ticket.qrToken, ageVerified: true },
+        { token: ticket.qrToken, showtimeId: showId, ageVerified: true },
         gateToken,
         { "Idempotency-Key": key() },
       ),

@@ -25,7 +25,7 @@ import {
 import { AuthModule, JwtGuard, RoleGuard, Roles, AuthRequest } from "./auth";
 import { BookingService } from "./booking.service";
 import { fail, parse, uuid } from "./http";
-import { decrypt, hash } from "./security";
+import { decrypt } from "./security";
 import { secret } from "./config";
 @Controller()
 export class CatalogController {
@@ -176,83 +176,6 @@ export class CinemaController {
       `SELECT r.*,p.amount,b.id AS booking_id FROM reconciliation_cases r JOIN payments p ON p.id=r.payment_id JOIN bookings b ON b.id=p.booking_id JOIN holds h ON h.id=b.hold_id JOIN showtimes s ON s.id=h.showtime_id JOIN auditoriums a ON a.id=s.auditorium_id JOIN staff_cinema_assignments sa ON sa.cinema_id=a.cinema_id WHERE sa.user_id=$1 ORDER BY r.created_at DESC`,
       [req.user.id],
     );
-  }
-  @Post("check-in/inspect") @Roles("GATE") inspect(
-    @Req() req: AuthRequest,
-    @Body() body: unknown,
-  ) {
-    const { token } = parse(
-      z.object({ token: z.string().min(32).max(100) }),
-      body,
-    );
-    return this.db.transaction((m) =>
-      this.inspectTicket(m, req.user.id, token, false),
-    );
-  }
-  @Post("check-in/confirm") @Roles("GATE") confirm(
-    @Req() req: AuthRequest,
-    @Body() body: unknown,
-    @Headers("idempotency-key") key: string,
-  ) {
-    const input = parse(
-      z.object({
-        token: z.string().min(32).max(100),
-        ageVerified: z.literal(true),
-      }),
-      body,
-    );
-    return this.bookings.idempotent(
-      req.user.id,
-      "check-in",
-      key,
-      input,
-      async (m) => {
-        const ticket = await this.inspectTicket(
-          m,
-          req.user.id,
-          input.token,
-          true,
-        );
-        await m.query(`UPDATE tickets SET status='CHECKED_IN' WHERE id=$1`, [
-          ticket.id,
-        ]);
-        await m.query(
-          "INSERT INTO check_ins(ticket_id,staff_id) VALUES($1,$2)",
-          [ticket.id, req.user.id],
-        );
-        await m.query(
-          `INSERT INTO audit_logs(actor_id,action,entity_id) VALUES($1,'ticket.checked_in',$2)`,
-          [req.user.id, ticket.id],
-        );
-        return { id: ticket.id, status: "CHECKED_IN" };
-      },
-    );
-  }
-  private async inspectTicket(
-    m: import("typeorm").EntityManager,
-    staffId: string,
-    token: string,
-    lock: boolean,
-  ) {
-    const [ticket] = await m.query(
-      `SELECT t.id,t.status,i.movie_title,i.seat_label,s.starts_at,s.status AS show_status,m.rating,a.name AS room FROM tickets t JOIN booking_items i ON i.id=t.item_id JOIN showtimes s ON s.id=i.showtime_id JOIN movies m ON m.id=s.movie_id JOIN auditoriums a ON a.id=s.auditorium_id JOIN staff_cinema_assignments sa ON sa.cinema_id=a.cinema_id WHERE t.qr_hash=$1 AND sa.user_id=$2 ${lock ? "FOR UPDATE OF t" : ""}`,
-      [hash(token), staffId],
-    );
-    if (!ticket)
-      fail("NOT_FOUND", "Không tìm thấy vé trong rạp được phân công.", 404);
-    const [clock] = await m.query("SELECT clock_timestamp() AS now");
-    const delta = ticket.starts_at.getTime() - clock.now.getTime();
-    if (
-      ticket.status !== "ISSUED" ||
-      ticket.show_status !== "SCHEDULED" ||
-      delta > 30 * 60000 ||
-      delta < -15 * 60000
-    )
-      fail(
-        "TICKET_NOT_ELIGIBLE",
-        "Vé đã dùng, vô hiệu hoặc ngoài thời gian check-in.",
-      );
-    return ticket;
   }
 }
 @Controller("webhooks/payments")

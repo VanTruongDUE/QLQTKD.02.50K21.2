@@ -35,3 +35,54 @@ export const eventSchema = z.object({
 });
 export type Role = "CUSTOMER" | "COUNTER" | "GATE" | "MANAGER";
 export type Principal = { id: string; role: Role; sessionId: string };
+
+const checkInFields = {
+  showtimeId: z.uuid(),
+  token: z.string().trim().min(1).max(512).optional(),
+  ticketCode: z.uuid().optional(),
+};
+const oneIdentifier = (v: { token?: string; ticketCode?: string }) =>
+  Boolean(v.token) !== Boolean(v.ticketCode);
+export const checkInSchema = z
+  .object(checkInFields)
+  .strict()
+  .refine(oneIdentifier, {
+    message: "Cung cấp QR hoặc mã vé, không cung cấp cả hai.",
+  });
+export const confirmCheckInSchema = z
+  .object({ ...checkInFields, ageVerified: z.literal(true) })
+  .strict()
+  .refine(oneIdentifier);
+export type CheckInInput = z.infer<typeof checkInSchema>;
+export type CheckInTicket = {
+  id: string;
+  status: string;
+  movie_title: string;
+  seat_label: string;
+  showtime_id: string;
+  starts_at: string;
+  room: string;
+  cinema: string;
+  rating: string;
+};
+export type GateShowtime = {
+  id: string;
+  title: string;
+  starts_at: string;
+  room: string;
+  cinema: string;
+  status: string;
+  checkInOpensAt: string;
+  checkInClosesAt: string;
+};
+export type CheckInReceipt = {
+  id: string;
+  status: "CHECKED_IN";
+  checkedInAt: string;
+  staffId: string;
+};
+export type CheckInHistory = CheckInReceipt & {
+  staffEmail: string;
+  seat_label: string;
+  movie_title: string;
+};

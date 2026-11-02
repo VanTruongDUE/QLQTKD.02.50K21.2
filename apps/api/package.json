@@ -8,6 +8,7 @@
     "worker": "ts-node src/worker.ts",
     "db:migrate": "ts-node src/database/migrate.ts",
     "db:seed": "ts-node src/database/seed.ts",
+    "db:seed:check-in": "ts-node src/database/seed-check-in.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

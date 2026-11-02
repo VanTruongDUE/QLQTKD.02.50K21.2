@@ -41,7 +41,21 @@ Mật khẩu mặc định local từ `.env.example`: `StarlightDemo2026!`. Có 
 | soatve@starlight.demo | Kiểm tra/xác nhận QR trong rạp được phân công        |
 | quanly@starlight.demo | Xem khoản tiền cần đối soát trong rạp được phân công |
 
-Có thể đăng ký khách mới trên web. Phim, rạp, giá, combo, lịch đều giả lập; seed tạo lịch 5 ngày kể từ lúc chạy. Check-in nhận token QR qua ô nhập, chỉ trong khoảng 30 phút trước đến 15 phút sau giờ bắt đầu, cần xác minh tuổi. Chưa tích hợp camera.
+Có thể đăng ký khách mới trên web. Phim, rạp, giá, combo, lịch đều giả lập; seed tạo lịch 5 ngày kể từ lúc chạy.
+
+## Check-in dành cho nhân viên
+
+Mở **http://localhost:3000/staff/check-in**, đăng nhập `soatve@starlight.demo` với mật khẩu demo ở trên. Chọn suất, quét QR bằng camera hoặc nhập **mã vé đầy đủ 36 ký tự** dưới QR, xác minh độ tuổi rồi bấm **Xác nhận vào phòng**. Camera chỉ kiểm tra vé; không tự xác nhận.
+
+Tạo một bộ vé demo mới với suất bắt đầu sau 10 phút:
+
+```powershell
+docker compose exec api pnpm --filter @starlight/api db:seed:check-in
+```
+
+Lệnh in tên phòng, suất và mã vé theo tình huống. Chọn phòng `Soát vé demo … / 1`, dùng `tickets.valid.id` để thử thành công; nhập lại sẽ bị từ chối. Đăng nhập `checkin@starlight.demo` ở cửa sổ riêng → **Vé của tôi** để mở QR tương ứng. Mỗi lần seed thêm dữ liệu mới, không khôi phục vé đã dùng. Vé nhận khách từ 30 phút trước đến 15 phút sau giờ chiếu; chạy lại seed nếu bộ demo đã hết hạn.
+
+Chi tiết API, tình huống lỗi, dữ liệu và giới hạn camera: [Hướng dẫn check-in](docs/CHECK_IN.md).
 
 ## Kiểm thử và bản build
 
@@ -76,6 +90,6 @@ Node 24.14.0, npm 11.19.1, pnpm 10.32.1, Git 2.52.0.windows.1, Docker 29.9.2, Co
 
 ## Phạm vi còn lại
 
-Chưa triển khai đổi/hoàn, duyệt hoàn, quầy tạo yêu cầu thay khách, CRUD danh mục, dashboard, n8n, cổng thanh toán sandbox của nhà cung cấp thật, camera QR, khôi phục mật khẩu. Callback muộn đã ghi khoản thu chờ duyệt; chưa tự trả tiền. Chưa đạt toàn bộ rubric TP3 hoặc số lượng 15 commit/10 tương tác AI — không tạo lịch sử giả.
+Chưa triển khai đổi/hoàn, duyệt hoàn, quầy tạo yêu cầu thay khách, CRUD danh mục, dashboard, n8n, cổng thanh toán sandbox của nhà cung cấp thật, khôi phục mật khẩu. Camera QR đã tích hợp và kiểm thử bằng video giả lập; chưa kiểm chứng bằng camera vật lý. Callback muộn đã ghi khoản thu chờ duyệt; chưa tự trả tiền. Chưa đạt toàn bộ rubric TP3 hoặc số lượng 15 commit/10 tương tác AI — không tạo lịch sử giả.
 
 Chi tiết: [quyết định và truy vết](docs/IMPLEMENTATION_NOTES.md), [kết quả kiểm thử](docs/TEST_RESULTS.md), [AI Log](docs/AI_LOG.md). Hai tài liệu nguồn được giữ nguyên ở root và sao chép vào `docs/` theo đường dẫn yêu cầu.

@@ -55,10 +55,18 @@ export class RoleGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
-    return (
-      !roles ||
-      roles.includes(context.switchToHttp().getRequest<AuthRequest>().user.role)
-    );
+    if (
+      roles &&
+      !roles.includes(
+        context.switchToHttp().getRequest<AuthRequest>().user.role,
+      )
+    )
+      fail(
+        "FORBIDDEN_ROLE",
+        "Tài khoản không có quyền thực hiện thao tác này.",
+        403,
+      );
+    return true;
   }
 }
 @Injectable()

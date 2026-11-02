@@ -28,7 +28,11 @@ test("movie → showtime → seats → mock payment → QR persists after reload
       }),
     })
     .click();
-  await page.locator(".show-list button").first().click();
+  await page
+    .locator(".show-list button")
+    .filter({ hasText: "Phòng 1" })
+    .first()
+    .click();
   const available = page.locator(".seat.available:not(:disabled)");
   await expect(available.first()).toBeVisible();
   const seatName = await available.first().getAttribute("aria-label");
