@@ -552,6 +552,31 @@ export class ChangesService {
     await m.query("INSERT INTO outbox_events(booking_id) VALUES($1)", [
       r.new_booking_id,
     ]);
+    const [exchangeOwner] = await m.query(
+      "SELECT email, display_name FROM users WHERE id=$1",
+      [r.owner_id],
+    );
+    if (exchangeOwner?.email) {
+      const exchangePayload = {
+        eventId: randomBytes(16).toString("hex"),
+        eventType: "ticket.exchange.completed",
+        schemaVersion: 1,
+        occurredAt: new Date().toISOString(),
+        recipientEmail: exchangeOwner.email,
+        exchange: {
+          requestId: r.id,
+          oldTickets: x.tickets.map((t: any) => ({ id: t.id })),
+          newTickets: items.map((item: any) => ({ id: item.id, seatLabel: item.seat_label })),
+          payable: x.quote.payable,
+          refundable: x.quote.refundable,
+        },
+      };
+      await m.query(
+        `INSERT INTO notification_outbox(event_id, event_type, booking_id, recipient_email, payload)
+         VALUES($1, 'ticket.exchange.completed', $2, $3, $4) ON CONFLICT(event_id) DO NOTHING`,
+        [exchangePayload.eventId, r.new_booking_id || r.booking_id, exchangeOwner.email, JSON.stringify(exchangePayload)],
+      );
+    }
     await m.query("DELETE FROM ticket_operation_locks WHERE request_id=$1", [
       r.id,
     ]);
@@ -921,6 +946,30 @@ export class ChangesService {
           "UPDATE change_requests SET status='COMPLETED' WHERE id=$1",
           [r.id],
         );
+        const [refundOwner] = await m.query(
+          "SELECT email, display_name FROM users WHERE id=$1",
+          [r.owner_id],
+        );
+        if (refundOwner?.email) {
+          const refundPayload = {
+            eventId: randomBytes(16).toString("hex"),
+            eventType: "ticket.refund.completed",
+            schemaVersion: 1,
+            occurredAt: new Date().toISOString(),
+            recipientEmail: refundOwner.email,
+            refund: {
+              requestId: r.id,
+              amount: r.quote.refundable,
+              tickets: (r.payload.ticketIds || []).map((id: string) => ({ id })),
+              reason: r.reason || undefined,
+            },
+          };
+          await m.query(
+            `INSERT INTO notification_outbox(event_id, event_type, booking_id, recipient_email, payload)
+             VALUES($1, 'ticket.refund.completed', $2, $3, $4) ON CONFLICT(event_id) DO NOTHING`,
+            [refundPayload.eventId, r.booking_id, refundOwner.email, JSON.stringify(refundPayload)],
+          );
+        }
         await audit(
           m,
           r.approved_by || r.created_by,

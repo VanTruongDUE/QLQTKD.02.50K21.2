@@ -123,6 +123,24 @@ export class CheckInService {
           `INSERT INTO audit_logs(actor_id,action,entity_id,cinema_id) SELECT $1,'ticket.checked_in',$2,a.cinema_id FROM showtimes s JOIN auditoriums a ON a.id=s.auditorium_id WHERE s.id=$3`,
           [staffId, ticket.id, input.showtimeId],
         );
+        const checkInPayload = {
+          eventId: hash(`${ticket.id}:${receipt.checkedInAt}`),
+          eventType: "ticket.checked_in",
+          schemaVersion: 1,
+          occurredAt: receipt.checkedInAt,
+          checkIn: {
+            ticketId: ticket.id,
+            staffId,
+            checkedInAt: receipt.checkedInAt,
+            seatLabel: ticket.seat_label,
+            movieTitle: ticket.movie_title,
+          },
+        };
+        await m.query(
+          `INSERT INTO notification_outbox(event_id, event_type, booking_id, recipient_email, payload)
+           VALUES($1, 'ticket.checked_in', NULL, 'audit@starlight.cinema', $2) ON CONFLICT(event_id) DO NOTHING`,
+          [checkInPayload.eventId, JSON.stringify(checkInPayload)],
+        );
         return { ...receipt, status: "CHECKED_IN" };
       },
     );

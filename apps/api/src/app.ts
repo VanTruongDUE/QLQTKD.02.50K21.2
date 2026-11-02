@@ -10,6 +10,7 @@ import { CheckInModule } from "./check-in";
 import { OperationsModule } from "./operations";
 import { ChangesModule } from "./changes";
 import { ReconciliationModule } from "./reconciliation";
+import { NotificationModule } from "./notification";
 @Module({
   imports: [
     TypeOrmModule.forRoot(databaseOptions),
@@ -20,6 +21,7 @@ import { ReconciliationModule } from "./reconciliation";
     OperationsModule,
     ChangesModule,
     ReconciliationModule,
+    NotificationModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

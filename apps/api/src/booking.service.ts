@@ -395,6 +395,29 @@ export class BookingService {
       await m.query("INSERT INTO outbox_events(booking_id) VALUES($1)", [
         booking.id,
       ]);
+      const [ownerUser] = await m.query(
+        "SELECT email, display_name FROM users WHERE id=$1",
+        [booking.owner_id],
+      );
+      if (ownerUser?.email) {
+        const notifPayload = {
+          eventId: randomBytes(16).toString("hex"),
+          eventType: "booking.confirmed",
+          schemaVersion: 1,
+          occurredAt: clock.now.toISOString(),
+          recipientEmail: ownerUser.email,
+          booking: { id: booking.id, total: booking.total, createdAt: booking.created_at },
+          customer: { id: booking.owner_id, email: ownerUser.email, name: ownerUser.display_name },
+          movie: { id: show.movie_id, title: show.title },
+          showtime: { id: show.id, startsAt: show.starts_at },
+          seats: items.map((i: any) => i.seat_label),
+        };
+        await m.query(
+          `INSERT INTO notification_outbox(event_id, event_type, booking_id, recipient_email, payload)
+           VALUES($1, 'booking.confirmed', $2, $3, $4) ON CONFLICT(event_id) DO NOTHING`,
+          [notifPayload.eventId, booking.id, ownerUser.email, JSON.stringify(notifPayload)],
+        );
+      }
       await m.query(
         `INSERT INTO audit_logs(actor_id,action,entity_id) VALUES($1,'booking.confirmed',$2)`,
         [booking.owner_id, booking.id],
