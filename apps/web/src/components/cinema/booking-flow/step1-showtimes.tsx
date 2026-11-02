@@ -11,7 +11,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Movie, Showtime, CinemaLocation, AgeRating, MovieFormat } from "../types";
-import { MOVIES, SHOWTIMES } from "../mock-data";
+import { MOVIES } from "../mock-data";
 
 interface Step1ShowtimesProps {
   cinema: CinemaLocation;
@@ -110,8 +110,9 @@ export function Step1Showtimes({
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
 
   // Dynamic Catalog State from PostgreSQL
-  const [movies, setMovies] = useState<Movie[]>(MOVIES);
-  const [showtimes, setShowtimes] = useState<Showtime[]>(SHOWTIMES);
+  const [movies, setMovies] = useState<Movie[]>([]);
+  const [showtimes, setShowtimes] = useState<Showtime[]>([]);
+  const [catalogError, setCatalogError] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -123,6 +124,11 @@ export function Step1Showtimes({
         ]);
 
         if (!isMounted) return;
+        if (!moviesRes?.ok || !showtimesRes?.ok) {
+          setCatalogError("Không thể tải danh mục phim và suất chiếu. Vui lòng thử lại.");
+          return;
+        }
+        setCatalogError("");
 
         if (moviesRes && moviesRes.ok) {
           const rawMovies = await moviesRes.json();
@@ -191,8 +197,8 @@ export function Step1Showtimes({
             setShowtimes(mappedShowtimes);
           }
         }
-      } catch (err) {
-        console.warn("Failed to load catalog from API, using fallback:", err);
+      } catch {
+        if (isMounted) setCatalogError("Không thể kết nối máy chủ danh mục. Vui lòng thử lại.");
       }
     }
 
@@ -387,7 +393,9 @@ export function Step1Showtimes({
       </div>
 
       {/* Movie Showtime Cards with 4-Column Rectangular Showtime Slots */}
-      {moviesWithShowtimes.length === 0 ? (
+      {catalogError ? (
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-6 text-center text-sm text-rose-200">{catalogError}</div>
+      ) : moviesWithShowtimes.length === 0 ? (
         <div className="p-8 rounded-2xl bg-[#131520] border border-[#222538] text-center space-y-3">
           <Film className="w-10 h-10 text-purple-400/60 mx-auto" />
           <h4 className="text-base font-bold text-white">

@@ -48,7 +48,7 @@ export function Step4Checkout({
   onTogglePoints,
   onPaymentSuccess,
 }: Step4CheckoutProps) {
-  const { profile } = useAuth();
+  const { profile, request } = useAuth();
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState("");
 
@@ -64,6 +64,7 @@ export function Step4Checkout({
   const [inputCode, setInputCode] = useState(promoCode);
   const [isAgreedPolicy, setIsAgreedPolicy] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [paymentError, setPaymentError] = useState("");
 
   // Calculate real total
   const rawSeatTotal = selectedSeatIds.reduce((sum, id) => {
@@ -88,50 +89,40 @@ export function Step4Checkout({
       return;
     }
     setEmailError("");
+    setPaymentError("");
+    if (!profile) {
+      setPaymentError("Vui lòng đăng nhập tài khoản khách hàng trước khi thanh toán.");
+      return;
+    }
     setIsProcessing(true);
-    let confirmedCode: string | undefined;
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api/v1";
+      const seatIds = selectedSeatIds.map((label) => seats.find((seat) => seat.id === label)?.serverId);
+      if (seatIds.some((id) => !id)) throw new Error("Sơ đồ ghế hiện tại chưa đồng bộ với máy chủ. Vui lòng tải lại suất chiếu.");
+      const products = await fetch("/api/v1/products").then(async (response) => {
+        if (!response.ok) throw new Error("Không tải được danh sách combo.");
+        return response.json() as Promise<Array<{ id: string; name: string }>>;
+      });
       const combos = Object.entries(fnbQuantities)
         .filter((entry) => entry[1] > 0)
         .map(([id, quantity]) => {
           const item = FNB_ITEMS.find((f) => f.id === id);
+          const product = products.find((candidate) => candidate.name === item?.name);
+          if (!product) throw new Error(`Combo ${item?.name || id} chưa được cấu hình trên máy chủ.`);
           return {
-            name: item?.name || id,
+            productId: product.id,
             quantity,
-            unitPrice: item?.price || 0,
           };
         });
-
-      const res = await fetch(`${apiUrl}/checkout/confirm`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          recipientEmail: trimmedEmail,
-          customerName: profile?.display_name || "Khách hàng",
-          movieTitle: movie.title,
-          cinemaName: cinema?.name || "Starlight Cinema",
-          roomName: showtime?.room || "Phòng Chiếu",
-          startsAt: showtime?.startsAt || new Date().toISOString(),
-          seats: selectedSeatIds,
-          combos,
-          total: computedTotal,
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        if (data.bookingId) {
-          confirmedCode = data.bookingId;
-        }
-      }
+      const hold = await request<{ id: string }>("/holds", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ showtimeId: showtime.id, seatIds }) });
+      const booking = await request<{ id: string }>("/bookings", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ holdId: hold.id, products: combos }) });
+      const payment = await request<{ checkoutUrl?: string }>(`/bookings/${booking.id}/payments`, { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() } });
+      if (!payment.checkoutUrl) throw new Error("MoMo chưa trả về địa chỉ thanh toán.");
+      window.location.assign(payment.checkoutUrl);
+      return;
     } catch (err) {
-      console.error("Booking confirmation error:", err);
+      setPaymentError(err instanceof Error ? err.message : "Không thể tạo giao dịch MoMo.");
     } finally {
       setIsProcessing(false);
-      onPaymentSuccess(confirmedCode);
     }
   };
 
@@ -348,6 +339,8 @@ export function Step4Checkout({
           </p>
         )}
       </div>
+
+      {paymentError && <p role="alert" className="rounded-xl border border-rose-500/40 bg-rose-950/20 p-3 text-xs text-rose-300">{paymentError}</p>}
 
       {/* Policy Agreement Checkbox */}
       <div className="p-3.5 rounded-xl bg-[#131520] border border-[#222538] text-xs text-zinc-400">

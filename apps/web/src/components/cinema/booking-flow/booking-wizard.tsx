@@ -13,7 +13,7 @@ import {
   QrCode,
 } from "lucide-react";
 import { Movie, Showtime, CinemaLocation, Seat, Ticket } from "../types";
-import { MOVIES, SHOWTIMES, generateInitialSeats, FNB_ITEMS } from "../mock-data";
+import { MOVIES, SHOWTIMES, FNB_ITEMS, generateInitialSeats } from "../mock-data";
 import { Step1Showtimes } from "./step1-showtimes";
 import { Step2SeatMap } from "./step2-seatmap";
 import { Step3FnB } from "./step3-fnb";
@@ -71,7 +71,8 @@ export function BookingWizard({
   // Selections - Initial Clean Production State
   const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
   const [selectedShowtime, setSelectedShowtime] = useState<Showtime | null>(null);
-  const [seats, setSeats] = useState<Seat[]>(() => generateInitialSeats());
+  const [seats, setSeats] = useState<Seat[]>([]);
+  const [seatError, setSeatError] = useState("");
   const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([]);
   const [u22TicketCount, setU22TicketCount] = useState<number>(0);
   const [fnbQuantities, setFnbQuantities] = useState<Record<string, number>>({});
@@ -141,6 +142,7 @@ export function BookingWizard({
     setSelectedShowtime(showtime);
     setSelectedSeatIds([]);
     setSecondsRemaining(300);
+    setSeatError("");
     setCurrentStep(2);
 
     // Fetch real seat availability from PostgreSQL
@@ -148,22 +150,36 @@ export function BookingWizard({
       const res = await fetch(`/api/v1/showtimes/${showtime.id}/seats`);
       if (res.ok) {
         const data = await res.json();
-        if (data?.seats && Array.isArray(data.seats)) {
-          const bookedSeatSet = new Set(
-            data.seats
-              .filter((s: any) => s.status === "SOLD" || s.status === "HELD")
-              .map((s: any) => s.label)
-          );
-          setSeats((prevSeats) =>
-            prevSeats.map((seat) => ({
-              ...seat,
-              status: bookedSeatSet.has(seat.id) ? "booked" : "available",
-            }))
-          );
+        if (data?.seats && Array.isArray(data.seats) && data.seats.length > 0) {
+          const template = generateInitialSeats();
+          setSeats(data.seats.map((remote: any) => {
+            const base = template.find((seat) => seat.id === remote.label);
+            const row = remote.label.match(/^([A-Z]+)/)?.[1] || base?.row || "A";
+            const number = Number(remote.label.match(/(\d+)$/)?.[1] || base?.number || 1);
+            return {
+              id: remote.label,
+              serverId: remote.id,
+              row,
+              number,
+              type: base?.type || (row === "J" ? "couple" : "regular"),
+              price: base?.price || showtime.priceRegular,
+              pairId: base?.pairId,
+              isBestView: base?.isBestView,
+              status: remote.status === "SOLD" || remote.status === "HELD" ? "booked" : "available",
+            } as Seat;
+          }));
+          setSeatError("");
+        } else {
+          setSeats([]);
+          setSeatError("Suất chiếu này chưa có sơ đồ ghế khả dụng.");
         }
+      } else {
+        setSeats([]);
+        setSeatError("Không thể tải sơ đồ ghế cho suất chiếu này.");
       }
     } catch {
-      // Graceful fallback: maintain initial seat map
+      setSeats([]);
+      setSeatError("Không thể kết nối máy chủ để tải sơ đồ ghế.");
     }
   };
 
@@ -207,42 +223,8 @@ export function BookingWizard({
 
   // Payment success
   const handlePaymentSuccess = (bookingCode?: string) => {
-    const newCode = bookingCode || `STL-${Math.floor(100000 + Math.random() * 900000)}`;
-    setCreatedTicketCode(newCode);
-
-    if (selectedMovie && selectedShowtime) {
-      const seatTypeMap: Record<string, any> = {};
-      selectedSeatIds.forEach((id) => {
-        const s = seats.find((x) => x.id === id);
-        seatTypeMap[id] = s?.type || "regular";
-      });
-
-      const fnbList = FNB_ITEMS.filter((f) => (fnbQuantities[f.id] || 0) > 0).map(
-        (item) => ({ item, quantity: fnbQuantities[item.id] })
-      );
-
-      const newTicket: Ticket = {
-        id: `t-${Date.now()}`,
-        bookingCode: newCode,
-        phone: "0905123456",
-        customerName: "Nguyễn Văn Hùng",
-        movie: selectedMovie,
-        showtime: selectedShowtime,
-        cinema,
-        seats: selectedSeatIds,
-        seatTypes: seatTypeMap,
-        u22Count: u22TicketCount,
-        fnbItems: fnbList,
-        totalPrice: finalTotal,
-        status: "ELIGIBLE_REFUND",
-        createdAt: new Date().toISOString(),
-        popcornStatus: fnbList.length > 0 ? "NOT_PICKED" : "PICKED_UP",
-        qrToken: `STL-SECURE-${newCode}-${Date.now()}`,
-      };
-
-      onTicketCreated(newTicket);
-    }
-
+    if (!bookingCode) return;
+    setCreatedTicketCode(bookingCode);
     setCurrentStep(5);
   };
 
@@ -324,16 +306,19 @@ export function BookingWizard({
             )}
 
             {currentStep === 2 && selectedMovie && selectedShowtime && (
-              <Step2SeatMap
-                movie={selectedMovie}
-                showtime={selectedShowtime}
-                seats={seats}
-                selectedSeatIds={selectedSeatIds}
-                onToggleSeat={handleToggleSeat}
-                u22TicketCount={u22TicketCount}
-                onU22CountChange={setU22TicketCount}
-                forceSingleSeatWarning={forceSingleSeatWarning}
-              />
+              <>
+                {seatError && <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">{seatError}</div>}
+                <Step2SeatMap
+                  movie={selectedMovie}
+                  showtime={selectedShowtime}
+                  seats={seats}
+                  selectedSeatIds={selectedSeatIds}
+                  onToggleSeat={handleToggleSeat}
+                  u22TicketCount={u22TicketCount}
+                  onU22CountChange={setU22TicketCount}
+                  forceSingleSeatWarning={forceSingleSeatWarning}
+                />
+              </>
             )}
 
             {currentStep === 3 && (

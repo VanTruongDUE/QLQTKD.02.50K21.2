@@ -49,6 +49,7 @@ export type SeatType = "regular" | "vip" | "couple";
 
 export type Seat = {
   id: string;
+  serverId?: string;
   row: string;
   number: number;
   type: SeatType;

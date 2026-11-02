@@ -107,3 +107,11 @@ Hai bài browser đăng ký khách riêng → chọn phim → suất → ghế �
 ## Giới hạn kiểm chứng
 
 Chưa thử Firefox/WebKit thật, tải lớn, nhiều instance API, mất mạng dài hạn hoặc mọi tổ hợp deadlock. Chưa có camera QR, đổi/hoàn/phê duyệt, tích hợp thanh toán thật, n8n, CRUD quản trị. SMTP là Mailpit local; không khẳng định giao thư Internet. Kiểm thử cửa sổ check-in mới chứng minh ca hợp lệ và dùng trùng, chưa kiểm tra tất cả mốc biên thời gian/phân công rạp trong browser. Không báo coverage phần trăm vì chưa đo.
+## Bổ sung kiểm chứng backend ngày 03/11/2026
+
+- `pnpm db:migrate`: áp dụng `PaymentProviderReference1793754000001` trên database đang chạy.
+- `pnpm --filter @starlight/api test`: 5 test files, **73/73 ca đạt**; có test dashboard đối chiếu doanh thu/vé/lấp đầy và test chữ ký IPN MoMo với dữ liệu đã biết.
+- `pnpm typecheck`: contracts, API và web đạt.
+- `pnpm --filter @starlight/api build`: đạt.
+- `docker compose build api worker` và `docker compose up -d api worker`: đạt; API health trả `{ "ok": true }`, các route demo simulate/webhook đều trả 404.
+- MoMo sandbox thật chưa chạy do chưa có credential và IPN HTTPS public; adapter/refund/query chỉ được kiểm chứng qua typecheck và test core bằng TestGateway.

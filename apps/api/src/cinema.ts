@@ -11,8 +11,6 @@ import {
   Module,
   HttpCode,
 } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
-import { N8nWebhookService, NotificationService } from "./notification";
 import type { RawBodyRequest } from "@nestjs/common";
 import type { Request } from "express";
 import { DataSource } from "typeorm";
@@ -51,65 +49,6 @@ export class CatalogController {
         `SELECT ss.seat_id AS id,se.label,CASE WHEN ss.ticket_id IS NOT NULL THEN 'SOLD' WHEN h.status='ACTIVE' AND h.expires_at>clock_timestamp() THEN 'HELD' ELSE 'AVAILABLE' END AS status FROM showtime_seats ss JOIN seats se ON se.id=ss.seat_id JOIN showtimes st ON st.id=ss.showtime_id LEFT JOIN holds h ON h.id=ss.hold_id WHERE ss.showtime_id=$1 AND st.provenance='OPERATIONAL' ORDER BY se.label`,
         [uuid(id)],
       ),
-    };
-  }
-  @Post("checkout/confirm")
-  async confirmCheckout(@Body() body: any) {
-    const recipientEmail = (body.recipientEmail || "").trim();
-    if (!recipientEmail) {
-      return { success: false, message: "Vui lòng nhập email nhận vé." };
-    }
-    const eventId = "evt-" + randomUUID();
-    const bookingId = body.bookingId || ("STL-" + Math.floor(100000 + Math.random() * 900000));
-    const payload = {
-      eventId,
-      eventType: "booking.confirmed",
-      schemaVersion: 1,
-      occurredAt: new Date().toISOString(),
-      recipientEmail,
-      customer: {
-        name: body.customerName || "Khách hàng",
-        email: recipientEmail,
-      },
-      movie: {
-        title: body.movieTitle || "Phim Starlight Cinema",
-      },
-      showtime: {
-        cinema: body.cinemaName || "Starlight Cinema",
-        room: body.roomName || "Phòng Chiếu 01",
-        startsAt: body.startsAt || new Date().toISOString(),
-      },
-      booking: {
-        id: bookingId,
-        total: body.total || 0,
-        createdAt: new Date().toISOString(),
-      },
-      seats: body.seats || [],
-      combos: body.combos || [],
-    };
-
-    await this.db.query(
-      `INSERT INTO notification_outbox(event_id, event_type, booking_id, recipient_email, payload, status)
-       VALUES($1, 'booking.confirmed', NULL, $2, $3, 'PENDING')
-       ON CONFLICT(event_id) DO NOTHING`,
-      [eventId, recipientEmail, JSON.stringify(payload)],
-    );
-
-    if (process.env.N8N_WEBHOOK_URL) {
-      try {
-        const webhookService = new N8nWebhookService();
-        const notificationService = new NotificationService(this.db, webhookService);
-        await notificationService.dispatchPending(1, eventId);
-      } catch (e) {
-        console.error("Immediate dispatch error:", e);
-      }
-    }
-
-    return {
-      success: true,
-      bookingId,
-      eventId,
-      recipientEmail,
     };
   }
 }

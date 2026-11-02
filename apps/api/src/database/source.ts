@@ -7,6 +7,7 @@ import { Operations1793667600000 } from "./migrations/Operations";
 import { ProviderEvents1793667600001 } from "./migrations/ProviderEvents";
 import { CatalogProvenance1793667600002 } from "./migrations/CatalogProvenance";
 import { NotificationOutbox1793754000000 } from "./migrations/NotificationOutbox";
+import { PaymentProviderReference1793754000001 } from "./migrations/PaymentProviderReference";
 export const databaseOptions = {
   type: "postgres" as const,
   url: required("DATABASE_URL"),
@@ -17,6 +18,7 @@ export const databaseOptions = {
     ProviderEvents1793667600001,
     CatalogProvenance1793667600002,
     NotificationOutbox1793754000000,
+    PaymentProviderReference1793754000001,
   ],
   synchronize: false,
 };

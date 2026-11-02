@@ -257,6 +257,7 @@ export class BookingService {
     amount: number;
     currency: "VND";
     status: "SUCCEEDED" | "FAILED";
+    reference?: string;
   }) {
     this.gateway.assertConfigured();
     const [purpose] = await this.db.query(
@@ -310,9 +311,10 @@ export class BookingService {
       );
       if (payment.status === "SUCCEEDED")
         return { accepted: true, duplicate: true };
-      await m.query("UPDATE payments SET status=$1 WHERE id=$2", [
+      await m.query("UPDATE payments SET status=$1,provider_transaction_id=COALESCE($3,provider_transaction_id) WHERE id=$2", [
         event.status,
         payment.id,
+        event.reference || null,
       ]);
       if (event.status === "FAILED")
         return { accepted: true, status: "FAILED" };

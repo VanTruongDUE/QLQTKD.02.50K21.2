@@ -190,8 +190,8 @@ export class NotificationService {
   ): Promise<{ processed: number; sent: number; failed: number }> {
     const maxRetries = this.webhookService.getMaxRetries();
 
-    return this.db.transaction(async (m) => {
-      const rows = await m.query(
+    const rows = await this.db.transaction(async (m) => {
+      return m.query(
         `WITH claimed AS (
           UPDATE notification_outbox
           SET status = 'PROCESSING',
@@ -212,58 +212,24 @@ export class NotificationService {
         [limit, targetEventId || null],
       );
 
-      let sentCount = 0;
-      let failedCount = 0;
-
-      for (const row of rows) {
-        const payload: StarlightEventPayload =
-          typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
-
-        const result = await this.webhookService.send(payload);
-
-        if (result.success) {
-          await m.query(
-            `UPDATE notification_outbox
-             SET status = 'SENT',
-                 sent_at = clock_timestamp(),
-                 attempts = attempts + 1,
-                 last_error = NULL,
-                 updated_at = clock_timestamp()
-             WHERE id = $1`,
-            [row.id],
-          );
-          sentCount++;
-        } else {
-          const newAttempts = row.attempts + 1;
-          const isFinalFailure = newAttempts >= maxRetries;
-          const backoffSeconds = Math.min(300, Math.pow(2, newAttempts) * 5);
-
-          await m.query(
-            `UPDATE notification_outbox
-             SET status = $2,
-                 attempts = $3,
-                 last_error = $4,
-                 next_retry_at = clock_timestamp() + (interval '1 second' * $5),
-                 updated_at = clock_timestamp()
-             WHERE id = $1`,
-            [
-              row.id,
-              isFinalFailure ? "FAILED" : "PENDING",
-              newAttempts,
-              result.error || "Delivery failed",
-              backoffSeconds,
-            ],
-          );
-          failedCount++;
-        }
-      }
-
-      return {
-        processed: rows.length,
-        sent: sentCount,
-        failed: failedCount,
-      };
     });
+    let sentCount = 0;
+    let failedCount = 0;
+    for (const row of rows) {
+      const payload: StarlightEventPayload = typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
+      const result = await this.webhookService.send(payload);
+      if (result.success) {
+        await this.db.query(`UPDATE notification_outbox SET status='SENT',sent_at=clock_timestamp(),attempts=attempts+1,last_error=NULL,updated_at=clock_timestamp() WHERE id=$1 AND status='PROCESSING'`, [row.id]);
+        sentCount++;
+      } else {
+        const newAttempts = row.attempts + 1;
+        const isFinalFailure = newAttempts >= maxRetries;
+        const backoffSeconds = Math.min(300, Math.pow(2, newAttempts) * 5);
+        await this.db.query(`UPDATE notification_outbox SET status=$2,attempts=$3,last_error=$4,next_retry_at=clock_timestamp()+(interval '1 second'*$5),updated_at=clock_timestamp() WHERE id=$1 AND status='PROCESSING'`, [row.id, isFinalFailure ? "FAILED" : "PENDING", newAttempts, result.error || "Delivery failed", backoffSeconds]);
+        failedCount++;
+      }
+    }
+    return { processed: rows.length, sent: sentCount, failed: failedCount };
   }
 
   async buildBookingConfirmedPayload(

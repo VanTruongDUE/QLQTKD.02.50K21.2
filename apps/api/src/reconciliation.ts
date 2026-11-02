@@ -101,7 +101,7 @@ export class ReconciliationController {
   ) {
     uuid(id);
     const [r] = await this.db.query(
-      "SELECT r.*,p.booking_id,p.provider_reference FROM refunds r JOIN payments p ON p.id=r.payment_id WHERE r.id=$1",
+      "SELECT r.*,p.booking_id,p.provider_transaction_id,p.provider_reference FROM refunds r JOIN payments p ON p.id=r.payment_id WHERE r.id=$1",
       [id],
     );
     if (!r) fail("NOT_FOUND", "Không tìm thấy khoản hoàn.", 404);
@@ -124,7 +124,7 @@ export class ReconciliationController {
         b.cinema_id,
       );
       try {
-        const result = await this.gateway.refund(id, r.payment_id, r.amount);
+        const result = await this.gateway.refund(id, r.provider_transaction_id || r.provider_reference, r.amount);
         if (result.status === "PENDING")
           await this.db.query(
             "UPDATE refunds SET status='PENDING',provider_reference=$2 WHERE id=$1 AND status='UNKNOWN'",
@@ -137,6 +137,15 @@ export class ReconciliationController {
             amount: r.amount,
             currency: "VND",
             status: "FAILED",
+          });
+        if (result.status === "SUCCEEDED")
+          await this.changes.refundEvent({
+            eventId: `submission:${id}`,
+            id,
+            amount: r.amount,
+            currency: "VND",
+            status: "SUCCEEDED",
+            reference: result.reference,
           });
       } catch {
         /* UNKNOWN requires verification. */

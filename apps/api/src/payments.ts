@@ -13,6 +13,7 @@ export type VerifiedMoneyEvent = {
   amount: number;
   currency: "VND";
   status: "SUCCEEDED" | "FAILED";
+  reference?: string;
 };
 // A concrete provider must verify its raw webhook and query ambiguous transfers.
 // The default port deliberately has no success path or generic HMAC callback.
@@ -27,6 +28,9 @@ export class PaymentGateway {
       apiUrl: process.env.MOMO_API_URL || "https://test-payment.momo.vn/v2/gateway/api/create",
       redirectUrl: process.env.MOMO_REDIRECT_URL || "",
       ipnUrl: process.env.MOMO_IPN_URL || "",
+      refundUrl: process.env.MOMO_REFUND_URL || "https://test-payment.momo.vn/v2/gateway/api/refund",
+      queryUrl: process.env.MOMO_QUERY_URL || "https://test-payment.momo.vn/v2/gateway/api/query",
+      refundQueryUrl: process.env.MOMO_REFUND_QUERY_URL || "https://test-payment.momo.vn/v2/gateway/api/refund/query",
     };
   }
   assertConfigured(): void {
@@ -72,19 +76,47 @@ export class PaymentGateway {
     return { status: "PENDING", reference: requestId, checkoutUrl: result.payUrl };
   }
   async refund(
-    _id: string,
-    _originalPaymentId: string,
-    _amount: number,
+    id: string,
+    originalTransactionId: string,
+    amount: number,
   ): Promise<TransferResult> {
     this.assertConfigured();
-    throw new Error("unreachable");
+    const config = this.config();
+    const requestId = randomUUID();
+    const description = `Hoàn tiền vé Starlight ${id}`;
+    const raw = `accessKey=${config.accessKey}&amount=${amount}&description=${description}&orderId=${id}&partnerCode=${config.partnerCode}&requestId=${requestId}&transId=${originalTransactionId}`;
+    const response = await fetch(config.refundUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=UTF-8" },
+      signal: AbortSignal.timeout(30000),
+      body: JSON.stringify({ partnerCode: config.partnerCode, orderId: id, requestId, amount, transId: originalTransactionId, lang: "vi", description, signature: this.sign(raw) }),
+    });
+    const result = await response.json() as { resultCode?: number; message?: string; transId?: string | number };
+    if (!response.ok) fail("PAYMENT_PROVIDER_ERROR", result.message || "MoMo không thể hoàn tiền.", 502);
+    if (result.resultCode === 0) return { status: "SUCCEEDED", reference: String(result.transId || requestId) };
+    if (result.resultCode === 9000) return { status: "PENDING", reference: requestId };
+    return { status: "FAILED", reference: requestId };
   }
   async query(
-    _kind: "payment" | "refund",
-    _id: string,
+    kind: "payment" | "refund",
+    id: string,
   ): Promise<VerifiedMoneyEvent> {
     this.assertConfigured();
-    throw new Error("unreachable");
+    const config = this.config();
+    const requestId = randomUUID();
+    const url = kind === "refund" ? config.refundQueryUrl : config.queryUrl;
+    const raw = `accessKey=${config.accessKey}&orderId=${id}&partnerCode=${config.partnerCode}&requestId=${requestId}`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=UTF-8" },
+      signal: AbortSignal.timeout(30000),
+      body: JSON.stringify({ partnerCode: config.partnerCode, requestId, orderId: id, lang: "vi", signature: this.sign(raw) }),
+    });
+    const result = await response.json() as { resultCode?: number; amount?: number; transId?: string | number; message?: string };
+    if (!response.ok) fail("PAYMENT_PROVIDER_ERROR", result.message || "MoMo không thể truy vấn giao dịch.", 502);
+    if (result.resultCode === 9000) fail("PAYMENT_PENDING", "MoMo chưa trả kết quả cuối cùng.", 409);
+    const status = result.resultCode === 0 ? "SUCCEEDED" : "FAILED";
+    return { eventId: requestId, id, amount: Number(result.amount || 0), currency: "VND", status, reference: result.transId ? String(result.transId) : undefined };
   }
   verifyWebhook(
     raw: Buffer,
@@ -108,6 +140,7 @@ export class PaymentGateway {
       amount: Number(body.amount),
       currency: "VND",
       status: Number(body.resultCode) === 0 ? "SUCCEEDED" : "FAILED",
+      reference: String(body.transId),
     };
   }
 }
