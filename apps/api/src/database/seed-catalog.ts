@@ -28,11 +28,35 @@ const DATES = [
   "2026-11-08",
 ];
 
+const PRODUCTS = [
+  { name: "Combo Mini Starlight", category: "combo", price: 75000, originalPrice: 90000, description: "Bắp rang ngọt 60oz và nước ngọt 22oz." },
+  { name: "Combo Đôi Starlight", category: "combo", price: 135000, originalPrice: 160000, description: "Bắp lớn vị phô mai hoặc caramel và 2 nước ngọt 32oz." },
+  { name: "Combo Gia Đình Vui Vẻ", category: "combo", price: 195000, originalPrice: 240000, description: "2 bắp lớn, 3 nước ngọt 32oz và 1 snack khoai tây." },
+  { name: "Khoai Tây Chiên Giòn / Snack Xúc Xích", category: "snack", price: 45000, description: "Khoai tây lát hoặc xúc xích phô mai nướng." },
+  { name: "Nâng Cấp Nước Đổi Vị", category: "drink", price: 15000, description: "Đổi nước ngọt sang trà đào cam sả hoặc trà sữa trân châu." },
+  { name: "Vé Khu Game / Bowling Starlight", category: "entertainment", price: 35000, originalPrice: 45000, description: "1 giờ bowling hoặc 15 xu game tại trung tâm giải trí." },
+];
+
 export async function seedCatalog() {
   if (!source.isInitialized) await source.initialize();
 
   return source.transaction(async (m) => {
     console.log("Seeding operational catalog...");
+
+    for (const product of PRODUCTS) {
+      const [existing] = await m.query(
+        "SELECT id FROM products WHERE name=$1 AND provenance='OPERATIONAL' LIMIT 1",
+        [product.name],
+      );
+      if (!existing) {
+        await m.query(
+          `INSERT INTO products(name, price, original_price, category, description, active, provenance)
+           VALUES($1,$2,$3,$4,$5,true,'OPERATIONAL')`,
+          [product.name, product.price, product.originalPrice ?? null, product.category, product.description],
+        );
+      }
+    }
+    console.log(`Ensured ${PRODUCTS.length} operational add-on products.`);
 
     // 1. Ensure all 6 cinemas exist
     for (const c of CINEMAS) {

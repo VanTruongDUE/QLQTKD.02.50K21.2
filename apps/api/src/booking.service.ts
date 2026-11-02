@@ -204,6 +204,13 @@ export class BookingService {
             "LEGACY_DATA",
             "Đơn cũ chỉ dùng tra cứu, không tạo giao dịch thật.",
           );
+        if (booking.status === "CONFIRMED" && this.gateway.name === "MOCK") {
+          const [completed] = await m.query(
+            "SELECT * FROM payments WHERE booking_id=$1 AND status='SUCCEEDED' ORDER BY created_at DESC LIMIT 1",
+            [bookingId],
+          );
+          if (completed) return { ...completed, autoConfirmed: true, bookingCode: booking.id };
+        }
         if (booking.status !== "PENDING_PAYMENT")
           fail("BOOKING_CLOSED", "Đơn không còn chờ thanh toán.");
         const [hold] = await m.query(
@@ -232,6 +239,20 @@ export class BookingService {
     if (claimed) {
       try {
         const response = await this.gateway.charge(id, claimed.amount);
+        if (this.gateway.name === "MOCK" && response.status === "SUCCEEDED") {
+          await this.db.query(
+            "UPDATE payments SET checkout_url=$2 WHERE id=$1 AND status='UNKNOWN'",
+            [id, response.checkoutUrl || null],
+          );
+          await this.callback({
+            eventId: `mock:${id}`,
+            paymentId: id,
+            amount: claimed.amount,
+            currency: "VND",
+            status: "SUCCEEDED",
+            reference: response.reference,
+          });
+        } else {
         // Only verified callbacks issue tickets, never a browser redirect or checkout URL.
         await this.db.query(
           "UPDATE payments SET status=$2,checkout_url=$3 WHERE id=$1 AND status='UNKNOWN'",
@@ -245,11 +266,15 @@ export class BookingService {
             response.checkoutUrl || null,
           ],
         );
+        }
       } catch {
         /* UNKNOWN persists for provider reconciliation, never retry a new charge blindly. */
       }
     }
-    return (await this.db.query("SELECT * FROM payments WHERE id=$1", [id]))[0];
+    const [payment] = await this.db.query("SELECT * FROM payments WHERE id=$1", [id]);
+    return this.gateway.name === "MOCK" && payment.status === "SUCCEEDED"
+      ? { ...payment, autoConfirmed: true, bookingCode: bookingId }
+      : payment;
   }
   async callback(event: {
     eventId: string;

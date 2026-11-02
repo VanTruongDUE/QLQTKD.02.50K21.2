@@ -19,7 +19,7 @@ export type VerifiedMoneyEvent = {
 // The default port deliberately has no success path or generic HMAC callback.
 @Injectable()
 export class PaymentGateway {
-  readonly name: string = "MOMO";
+  readonly name: string = process.env.PAYMENT_MODE === "mock" ? "MOCK" : "MOMO";
   private config() {
     return {
       partnerCode: process.env.MOMO_PARTNER_CODE || "",
@@ -34,15 +34,42 @@ export class PaymentGateway {
     };
   }
   assertConfigured(): void {
+    if (this.name === "MOCK") {
+      if (process.env.NODE_ENV === "production")
+        fail("PAYMENT_NOT_CONFIGURED", "Payment mock bị tắt trong production.", 503);
+      return;
+    }
     const config = this.config();
-    if (!config.partnerCode || !config.accessKey || !config.secretKey || !config.redirectUrl || !config.ipnUrl)
-      fail("PAYMENT_NOT_CONFIGURED", "Chưa cấu hình đầy đủ tài khoản MoMo.", 503);
+    const missing = [
+      ["MOMO_PARTNER_CODE", config.partnerCode],
+      ["MOMO_ACCESS_KEY", config.accessKey],
+      ["MOMO_SECRET_KEY", config.secretKey],
+      ["MOMO_REDIRECT_URL", config.redirectUrl],
+      ["MOMO_IPN_URL", config.ipnUrl],
+    ].filter(([, value]) => !value).map(([key]) => key);
+    const invalidUrl = [config.redirectUrl, config.ipnUrl].some((value) => {
+      try {
+        return !value || !/^https?:$/.test(new URL(value).protocol) || value.includes("your-public-domain.example");
+      } catch {
+        return true;
+      }
+    });
+    if (missing.length || invalidUrl)
+      fail("PAYMENT_NOT_CONFIGURED", missing.length
+        ? `MoMo chưa cấu hình đầy đủ: ${missing.join(", ")}`
+        : "MoMo chưa cấu hình đầy đủ. Kiểm tra MOMO_REDIRECT_URL và MOMO_IPN_URL.", 503);
   }
   private sign(value: string) {
     return createHmac("sha256", this.config().secretKey).update(value).digest("hex");
   }
   async charge(id: string, amount: number): Promise<TransferResult> {
     this.assertConfigured();
+    if (this.name === "MOCK")
+      return {
+        status: "SUCCEEDED",
+        reference: `mock-${randomUUID()}`,
+        checkoutUrl: `${process.env.MOMO_REDIRECT_URL || "http://localhost:3000/"}?payment=mock&paymentId=${encodeURIComponent(id)}&amount=${amount}`,
+      };
     const config = this.config();
     const requestId = randomUUID();
     const orderInfo = `Thanh toán vé Starlight ${id}`;

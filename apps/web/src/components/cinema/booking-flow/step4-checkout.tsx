@@ -60,11 +60,14 @@ export function Step4Checkout({
 
   const [selectedMethod, setSelectedMethod] = useState<
     "vnpay" | "momo" | "wallet" | "card"
-  >("vnpay");
+  >("momo");
   const [inputCode, setInputCode] = useState(promoCode);
   const [isAgreedPolicy, setIsAgreedPolicy] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentError, setPaymentError] = useState("");
+  // Keep the server-side hold and booking when payment setup fails, so retrying
+  // does not attempt to reserve the same seats a second time.
+  const [bookingId, setBookingId] = useState<string | null>(null);
 
   // Calculate real total
   const rawSeatTotal = selectedSeatIds.reduce((sum, id) => {
@@ -113,14 +116,27 @@ export function Step4Checkout({
             quantity,
           };
         });
-      const hold = await request<{ id: string }>("/holds", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ showtimeId: showtime.id, seatIds }) });
-      const booking = await request<{ id: string }>("/bookings", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ holdId: hold.id, products: combos }) });
-      const payment = await request<{ checkoutUrl?: string }>(`/bookings/${booking.id}/payments`, { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() } });
+      let currentBookingId = bookingId;
+      if (!currentBookingId) {
+        const hold = await request<{ id: string }>("/holds", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ showtimeId: showtime.id, seatIds }) });
+        const booking = await request<{ id: string }>("/bookings", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ holdId: hold.id, products: combos }) });
+        currentBookingId = booking.id;
+        setBookingId(booking.id);
+      }
+      const payment = await request<{ checkoutUrl?: string; autoConfirmed?: boolean; bookingCode?: string }>(`/bookings/${currentBookingId}/payments`, { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() } });
+      if (payment.autoConfirmed) {
+        onPaymentSuccess(payment.bookingCode || currentBookingId);
+        return;
+      }
       if (!payment.checkoutUrl) throw new Error("MoMo chưa trả về địa chỉ thanh toán.");
       window.location.assign(payment.checkoutUrl);
       return;
     } catch (err) {
-      setPaymentError(err instanceof Error ? err.message : "Không thể tạo giao dịch MoMo.");
+      const message = err instanceof Error ? err.message : "Không thể tạo giao dịch MoMo.";
+      if (/hết hạn|expired/i.test(message)) {
+        setBookingId(null);
+      }
+      setPaymentError(message);
     } finally {
       setIsProcessing(false);
     }

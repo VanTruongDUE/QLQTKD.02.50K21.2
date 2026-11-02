@@ -330,6 +330,7 @@ export function BookingWizard({
 
             {currentStep === 4 && selectedMovie && selectedShowtime && (
               <Step4Checkout
+                key={`${selectedShowtime.id}:${selectedSeatIds.join(",")}`}
                 movie={selectedMovie}
                 showtime={selectedShowtime}
                 cinema={cinema}

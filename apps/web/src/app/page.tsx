@@ -7,7 +7,7 @@ import { ExchangeRefundDashboard } from "@/components/cinema/exchange-refund-flo
 import { CheckInModule } from "@/components/cinema/check-in-flow/check-in-module";
 import { CinemaAuditoriumBackground } from "@/components/cinema/cinema-auditorium-background";
 import { CinemaLocation, Ticket } from "@/components/cinema/types";
-import { CINEMA_LOCATIONS, MOVIES, SAMPLE_TICKETS, SHOWTIMES } from "@/components/cinema/mock-data";
+import { CINEMA_LOCATIONS, MOVIES, SHOWTIMES } from "@/components/cinema/mock-data";
 import { useAuth } from "@/components/auth/auth-provider";
 
 export default function CinemaApp() {
@@ -19,8 +19,7 @@ export default function CinemaApp() {
     CINEMA_LOCATIONS[0] // Starlight Đà Nẵng
   );
 
-  const [tickets, setTickets] = useState<Ticket[]>(SAMPLE_TICKETS);
-  const [activeTicketCode, setActiveTicketCode] = useState<string>("STL-894210");
+  const [tickets, setTickets] = useState<Ticket[]>([]);
   const [bookingKey, setBookingKey] = useState(0);
 
   // Sync cinemas with backend PostgreSQL
@@ -80,6 +79,7 @@ export default function CinemaApp() {
         } as Ticket["showtime"];
         return {
           id: row.id,
+          bookingId: row.booking_id,
           bookingCode: row.id,
           phone: profile.phone,
           customerName: profile.display_name,
@@ -117,7 +117,6 @@ export default function CinemaApp() {
   // Add newly created ticket from booking flow
   const handleTicketCreated = (newTicket: Ticket) => {
     setTickets((prev) => [newTicket, ...prev]);
-    setActiveTicketCode(newTicket.bookingCode);
   };
 
   // Update existing ticket (exchange or refund)
@@ -128,8 +127,7 @@ export default function CinemaApp() {
   };
 
   // Jump to checkin view
-  const handleNavigateToCheckin = (ticketCode: string) => {
-    setActiveTicketCode(ticketCode);
+  const handleNavigateToCheckin = (_ticketCode: string) => {
     setActiveTab("checkin");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -213,7 +211,6 @@ export default function CinemaApp() {
         {activeTab === "checkin" && (
           <CheckInModule
             tickets={tickets}
-            activeTicketCode={activeTicketCode}
             onUpdateTicket={handleUpdateTicket}
           />
         )}

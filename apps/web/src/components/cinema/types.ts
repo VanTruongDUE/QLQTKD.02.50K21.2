@@ -81,6 +81,7 @@ export type PopcornStatus = "NOT_PICKED" | "PREPARING" | "PICKED_UP";
 
 export type Ticket = {
   id: string;
+  bookingId?: string;
   bookingCode: string; // e.g. "STL-894210"
   phone: string;
   customerName: string;
@@ -99,6 +100,13 @@ export type Ticket = {
   readyInMinutes?: number;
   qrToken?: string;
   qrImage?: string;
+  seatQrCodes?: {
+    ticketId: string;
+    seatLabel: string;
+    qrToken?: string;
+    qrImage?: string;
+    status: TicketStatus;
+  }[];
   ageVerified?: boolean;
   checkedInAt?: string;
   refundMethod?: "WALLET" | "ORIGINAL_PAYMENT";
