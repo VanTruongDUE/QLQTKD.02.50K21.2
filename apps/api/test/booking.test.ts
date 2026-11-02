@@ -75,7 +75,9 @@ beforeAll(async () => {
   owner = users.find((u: any) => u.email === "khach@starlight.demo").id;
   other = users.find((u: any) => u.email === "khach2@starlight.demo").id;
   // Each run adds an isolated auditorium/showtime; prior evidence remains intact.
-  const [cinema] = await db.query("SELECT id FROM cinemas LIMIT 1");
+  const [cinema] = (await db.query(
+    "SELECT c.id FROM cinemas c JOIN staff_cinema_assignments sa ON sa.cinema_id=c.id JOIN users u ON u.id=sa.user_id WHERE u.email='soatve@starlight.demo' LIMIT 1",
+  )) || (await db.query("SELECT id FROM cinemas LIMIT 1"));
   const [movie] = await db.query("SELECT id FROM movies LIMIT 1");
   const [room] = await db.query(
     "INSERT INTO auditoriums(cinema_id,name) VALUES($1,$2) RETURNING id",

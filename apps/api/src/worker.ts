@@ -3,10 +3,22 @@ import { BookingService } from "./booking.service";
 import nodemailer from "nodemailer";
 import { ChangesService } from "./changes";
 import { required } from "./config";
+import { N8nWebhookService, NotificationService } from "./notification";
 export async function tick() {
   const service = new BookingService(source);
   await service.expire();
   await new ChangesService(source).expire();
+
+  if (process.env.N8N_WEBHOOK_URL) {
+    const webhookService = new N8nWebhookService();
+    const notificationService = new NotificationService(source, webhookService);
+    try {
+      await notificationService.dispatchPending(10);
+    } catch (e) {
+      console.error("n8n notification dispatch error:", e);
+    }
+  }
+
   if (!process.env.SMTP_HOST || !process.env.SMTP_FROM) return;
   const transport = nodemailer.createTransport({
     host: process.env.SMTP_HOST,

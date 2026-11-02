@@ -1,0 +1,309 @@
+{
+  "name": "Starlight Cinema - Notification & Automation Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "starlight-cinema-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "starlight-cinema-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-auth",
+              "leftValue": "={{ $headers['x-webhook-secret'] }}",
+              "rightValue": "={{ $env.N8N_WEBHOOK_SECRET || 'starlight_secret_dev_key_2026' }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "auth-guard",
+      "name": "Verify Header Secret",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"success\": false,\n  \"error\": \"UNAUTHORIZED\",\n  \"message\": \"Invalid or missing X-Webhook-Secret header.\"\n}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "auth-failed-response",
+      "name": "401 Unauthorized",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [640, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json;\n\nif (!body.eventId || typeof body.eventId !== 'string') {\n  throw new Error('Validation Error: Missing or invalid eventId.');\n}\n\nif (!body.eventType || typeof body.eventType !== 'string') {\n  throw new Error('Validation Error: Missing or invalid eventType.');\n}\n\nconst validTypes = [\n  'booking.confirmed',\n  'ticket.exchange.completed',\n  'ticket.refund.completed',\n  'ticket.checked_in'\n];\n\nif (!validTypes.includes(body.eventType)) {\n  throw new Error(`Validation Error: Unsupported eventType ${body.eventType}`);\n}\n\nif (body.eventType !== 'ticket.checked_in' && !body.recipientEmail) {\n  throw new Error('Validation Error: Missing recipientEmail for customer email notification.');\n}\n\nreturn [{\n  json: {\n    ...body,\n    receivedAt: new Date().toISOString(),\n    isValid: true\n  }\n}];"
+      },
+      "id": "payload-validator",
+      "name": "Validate Event Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 240]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.eventType }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "booking.confirmed",
+              "outputKey": "booking_confirmed"
+            },
+            {
+              "value2": "ticket.exchange.completed",
+              "outputKey": "ticket_exchange"
+            },
+            {
+              "value2": "ticket.refund.completed",
+              "outputKey": "ticket_refund"
+            },
+            {
+              "value2": "ticket.checked_in",
+              "outputKey": "ticket_checked_in"
+            }
+          ]
+        }
+      },
+      "id": "event-router",
+      "name": "Route Event Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [880, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ev = $json;\nconst customer = ev.customer || {};\nconst movie = ev.movie || {};\nconst show = ev.showtime || {};\nconst booking = ev.booking || {};\nconst seats = ev.seats || [];\nconst combos = ev.combos || [];\n\nconst formattedTotal = Number(booking.total || 0).toLocaleString('vi-VN') + ' VND';\nconst formattedTime = show.startsAt ? new Date(show.startsAt).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }) : 'Chưa xác định';\n\nconst combosHtml = combos.length > 0\n  ? `<ul>${combos.map(c => `<li>${c.name} x ${c.quantity} (${Number(c.unitPrice).toLocaleString('vi-VN')} VND)</li>`).join('')}</ul>`\n  : '<p>Không có combo bắp nước.</p>';\n\nconst html = `\n<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; background-color: #0b0f19; color: #f3f4f6; border-radius: 12px; border: 1px solid #374151;\">\n  <div style=\"text-align: center; border-bottom: 2px solid #fbbf24; padding-bottom: 12px; margin-bottom: 20px;\">\n    <h1 style=\"color: #fbbf24; margin: 0; font-size: 24px;\">✨ STARLIGHT CINEMA ✨</h1>\n    <p style=\"color: #9ca3af; margin: 4px 0 0 0;\">Xác nhận đặt vé thành công</p>\n  </div>\n\n  <p>Kính chào <strong>${customer.name || customer.email || 'Quý khách'}</strong>,</p>\n  <p>Cảm ơn bạn đã lựa chọn Starlight Cinema. Dưới đây là thông tin chi tiết về vé xem phim của bạn:</p>\n\n  <div style=\"background-color: #111827; border: 1px solid #1f2937; border-radius: 8px; padding: 16px; margin: 20px 0;\">\n    <p style=\"margin: 6px 0;\">🎬 <strong>Phim:</strong> <span style=\"color: #60a5fa;\">${movie.title || 'N/A'}</span></p>\n    <p style=\"margin: 6px 0;\">🏛️ <strong>Rạp:</strong> ${show.cinema || 'Starlight Cinema'}</p>\n    <p style=\"margin: 6px 0;\">🚪 <strong>Phòng chiếu:</strong> ${show.room || 'Phòng chiếu chính'}</p>\n    <p style=\"margin: 6px 0;\">⏰ <strong>Suất chiếu:</strong> <span style=\"color: #34d399;\">${formattedTime}</span></p>\n    <p style=\"margin: 6px 0;\">💺 <strong>Số ghế:</strong> <strong style=\"color: #f59e0b;\">${seats.join(', ') || 'N/A'}</strong></p>\n    <p style=\"margin: 6px 0;\">🧾 <strong>Mã đơn hàng:</strong> <code>${booking.id || 'N/A'}</code></p>\n    <p style=\"margin: 6px 0;\">💰 <strong>Tổng thanh toán:</strong> <strong style=\"color: #fbbf24; font-size: 16px;\">${formattedTotal}</strong></p>\n  </div>\n\n  <div style=\"margin: 16px 0;\">\n    <h4 style=\"color: #e5e7eb; margin-bottom: 8px;\">🍿 Bắp nước & Combo:</h4>\n    ${combosHtml}\n  </div>\n\n  <div style=\"background-color: #1e1b4b; border-left: 4px solid #818cf8; padding: 12px; border-radius: 4px; margin: 20px 0;\">\n    <p style=\"margin: 0; font-size: 13px; color: #c7d2fe;\">\n      🎟️ <strong>Hướng dẫn check-in:</strong> Vui lòng đăng nhập vào tài khoản trên website Starlight Cinema, mở mục <strong>Vé của tôi</strong> để xuất trình mã QR điện tử tại quầy soát vé trước giờ chiếu ít nhất 15 phút.\n    </p>\n  </div>\n\n  <p style=\"color: #9ca3af; font-size: 12px; text-align: center; margin-top: 30px; border-top: 1px solid #1f2937; padding-top: 12px;\">\n    Hệ thống thông báo tự động từ Starlight Cinema • Email này được tạo tự động, vui lòng không trả lời trực tiếp.\n  </p>\n</div>\n`;\n\nreturn [{\n  json: {\n    recipientEmail: ev.recipientEmail,\n    subject: `[Starlight Cinema] Xác nhận đặt vé thành công: ${movie.title || 'Vé xem phim'}`,\n    htmlText: html,\n    eventId: ev.eventId\n  }\n}];"
+      },
+      "id": "tpl-booking-confirmed",
+      "name": "Prepare Booking Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 80]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ev = $json;\nconst exchange = ev.exchange || {};\nconst oldTickets = exchange.oldTickets || [];\nconst newTickets = exchange.newTickets || [];\nconst payableText = exchange.payable ? `${Number(exchange.payable).toLocaleString('vi-VN')} VND` : '0 VND';\n\nconst html = `\n<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; background-color: #0b0f19; color: #f3f4f6; border-radius: 12px; border: 1px solid #374151;\">\n  <div style=\"text-align: center; border-bottom: 2px solid #3b82f6; padding-bottom: 12px; margin-bottom: 20px;\">\n    <h1 style=\"color: #3b82f6; margin: 0; font-size: 24px;\">🔄 STARLIGHT CINEMA</h1>\n    <p style=\"color: #9ca3af; margin: 4px 0 0 0;\">Xác nhận đổi vé thành công</p>\n  </div>\n\n  <p>Kính chào Quý khách,</p>\n  <p>Yêu cầu đổi vé xem phim của bạn đã được nhân viên hoàn tất theo đúng quy định:</p>\n\n  <div style=\"background-color: #111827; border: 1px solid #1f2937; border-radius: 8px; padding: 16px; margin: 20px 0;\">\n    <p style=\"margin: 6px 0;\">📋 <strong>Mã yêu cầu đổi:</strong> <code>${exchange.requestId || 'N/A'}</code></p>\n    <p style=\"margin: 6px 0;\">🎟️ <strong>Số lượng vé đã đổi:</strong> ${newTickets.length} vé</p>\n    <p style=\"margin: 6px 0;\">💺 <strong>Ghế mới:</strong> <strong style=\"color: #34d399;\">${newTickets.map(t => t.seatLabel || t.id).join(', ')}</strong></p>\n    <p style=\"margin: 6px 0;\">💳 <strong>Chênh lệch thanh toán thêm:</strong> ${payableText}</p>\n  </div>\n\n  <p style=\"font-size: 13px; color: #9ca3af;\">Vé cũ đã được thu hồi và cập nhật trạng thái đã đổi (REPLACED). Vé mới đã sẵn sàng trong tài khoản của bạn.</p>\n</div>\n`;\n\nreturn [{\n  json: {\n    recipientEmail: ev.recipientEmail,\n    subject: `[Starlight Cinema] Xác nhận hoàn tất đổi vé #${exchange.requestId || ''}`,\n    htmlText: html,\n    eventId: ev.eventId\n  }\n}];"
+      },
+      "id": "tpl-exchange-completed",
+      "name": "Prepare Exchange Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ev = $json;\nconst refund = ev.refund || {};\nconst amountText = refund.amount ? `${Number(refund.amount).toLocaleString('vi-VN')} VND` : '0 VND';\n\nconst html = `\n<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; background-color: #0b0f19; color: #f3f4f6; border-radius: 12px; border: 1px solid #374151;\">\n  <div style=\"text-align: center; border-bottom: 2px solid #ef4444; padding-bottom: 12px; margin-bottom: 20px;\">\n    <h1 style=\"color: #ef4444; margin: 0; font-size: 24px;\">💸 STARLIGHT CINEMA</h1>\n    <p style=\"color: #9ca3af; margin: 4px 0 0 0;\">Thông báo hoàn tiền vé thành công</p>\n  </div>\n\n  <p>Kính chào Quý khách,</p>\n  <p>Giao dịch hoàn tiền cho vé xem phim của bạn đã được hệ thống Starlight Cinema xác nhận:</p>\n\n  <div style=\"background-color: #111827; border: 1px solid #1f2937; border-radius: 8px; padding: 16px; margin: 20px 0;\">\n    <p style=\"margin: 6px 0;\">📋 <strong>Mã yêu cầu hoàn:</strong> <code>${refund.requestId || 'N/A'}</code></p>\n    <p style=\"margin: 6px 0;\">💵 <strong>Số tiền hoàn lại:</strong> <strong style=\"color: #fbbf24;\">${amountText}</strong></p>\n    ${refund.reason ? `<p style=\"margin: 6px 0;\">📝 <strong>Lý do:</strong> ${refund.reason}</p>` : ''}\n  </div>\n\n  <p style=\"font-size: 13px; color: #9ca3af;\">Khoản hoàn sẽ được chuyển về tài khoản ban đầu theo thời gian quy định của ngân hàng hoặc cổng thanh toán.</p>\n</div>\n`;\n\nreturn [{\n  json: {\n    recipientEmail: ev.recipientEmail,\n    subject: `[Starlight Cinema] Xác nhận hoàn tiền vé #${refund.requestId || ''}`,\n    htmlText: html,\n    eventId: ev.eventId\n  }\n}];"
+      },
+      "id": "tpl-refund-completed",
+      "name": "Prepare Refund Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ev = $json;\nreturn [{\n  json: {\n    status: 'RECORDED',\n    eventType: 'ticket.checked_in',\n    eventId: ev.eventId,\n    ticketId: ev.checkIn?.ticketId,\n    checkedInAt: ev.checkIn?.checkedInAt,\n    message: 'Check-in recorded in audit trail successfully; no customer email dispatched.'\n  }\n}];"
+      },
+      "id": "tpl-checked-in",
+      "name": "Record Check-In Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 560]
+    },
+    {
+      "parameters": {
+        "fromEmail": "starlight.cinema.notification@gmail.com",
+        "toEmail": "={{ $json.recipientEmail }}",
+        "subject": "={{ $json.subject }}",
+        "html": "={{ $json.htmlText }}",
+        "options": {}
+      },
+      "id": "gmail-smtp-send",
+      "name": "Send Email via Gmail SMTP",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1460, 240],
+      "credentials": {
+        "smtp": {
+          "id": "SMTP account",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"success\": true,\n  \"eventId\": \"={{ $json.eventId }}\",\n  \"status\": \"DELIVERED\",\n  \"message\": \"Event processed and notification delivered successfully.\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "success-response",
+      "name": "200 Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1720, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Verify Header Secret",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Header Secret": {
+      "main": [
+        [
+          {
+            "node": "Validate Event Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "401 Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Event Payload": {
+      "main": [
+        [
+          {
+            "node": "Route Event Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Event Type": {
+      "main": [
+        [
+          {
+            "node": "Prepare Booking Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Exchange Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Refund Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Check-In Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Booking Email": {
+      "main": [
+        [
+          {
+            "node": "Send Email via Gmail SMTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Exchange Email": {
+      "main": [
+        [
+          {
+            "node": "Send Email via Gmail SMTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Refund Email": {
+      "main": [
+        [
+          {
+            "node": "Send Email via Gmail SMTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Check-In Event": {
+      "main": [
+        [
+          {
+            "node": "200 Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email via Gmail SMTP": {
+      "main": [
+        [
+          {
+            "node": "200 Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
+
