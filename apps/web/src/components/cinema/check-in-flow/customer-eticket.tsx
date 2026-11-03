@@ -22,7 +22,12 @@ export function CustomerETicket({
   forceStampSlam = false,
 }: CustomerETicketProps) {
   const [activeQrTab, setActiveQrTab] = useState<"cinema" | "fnb">("cinema");
+  const [activeSeatIndex, setActiveSeatIndex] = useState(0);
   const [qrRotateSeconds, setQrRotateSeconds] = useState(28);
+  const qrEntries = ticket.seatQrCodes?.length ? ticket.seatQrCodes : [{ ticketId: ticket.id, seatLabel: ticket.seats[0], qrToken: ticket.qrToken, qrImage: ticket.qrImage, status: ticket.status }];
+  const activeQr = qrEntries[Math.min(activeSeatIndex, qrEntries.length - 1)];
+
+  useEffect(() => setActiveSeatIndex(0), [ticket.bookingId, ticket.id]);
 
   // 3D Tilt State
   const cardRef = useRef<HTMLDivElement>(null);
@@ -193,12 +198,16 @@ export function CustomerETicket({
               </p>
             </div>
 
+            {qrEntries.length > 1 && <div className="flex flex-wrap justify-center gap-2" aria-label="Chọn mã QR theo ghế">
+              {qrEntries.map((entry, index) => <button key={entry.ticketId} type="button" onClick={() => setActiveSeatIndex(index)} className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${index === activeSeatIndex ? "border-pink-500 bg-pink-500/15 text-pink-300" : "border-zinc-700 bg-zinc-900 text-zinc-400 hover:text-white"}`}>Ghế {entry.seatLabel}{entry.status === "CHECKED_IN" ? " · Đã check-in" : ""}</button>)}
+            </div>}
+
             {/* Dynamic Animated QR Code Box */}
             <div className="max-w-[190px] mx-auto p-3 rounded-xl bg-white shadow-md relative group">
               <div className="relative aspect-square w-full bg-zinc-900 rounded-lg p-2 flex items-center justify-center overflow-hidden">
                 <img
-                  src={ticket.qrImage || (ticket.qrToken ? `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(ticket.qrToken)}` : "")}
-                  alt="Mã QR Soát Vé"
+                  src={activeQr.qrImage || (activeQr.qrToken ? `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(activeQr.qrToken)}` : "")}
+                  alt={`Mã QR soát vé ghế ${activeQr.seatLabel}`}
                   className="w-full h-full object-contain filter contrast-125"
                 />
 
@@ -217,7 +226,7 @@ export function CustomerETicket({
                   Mã an toàn
                 </span>
                 <span className="text-[10px] text-zinc-500 font-bold">
-                  Đổi mã sau {qrRotateSeconds}s
+                  Ghế {activeQr.seatLabel} · đổi mã sau {qrRotateSeconds}s
                 </span>
               </div>
             </div>

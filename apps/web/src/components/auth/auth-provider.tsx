@@ -23,7 +23,7 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api/v1";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
 async function decode<T>(response: Response): Promise<T> {
   const data = (await response.json().catch(() => ({}))) as T & ApiError;

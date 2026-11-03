@@ -99,6 +99,7 @@ export class BookingService {
     owner: string,
     input: {
       holdId: string;
+      recipientEmail?: string;
       products: { productId: string; quantity: number }[];
     },
     key?: string,
@@ -149,9 +150,15 @@ export class BookingService {
       }
       if (!Number.isSafeInteger(total) || total > 2147483647)
         fail("AMOUNT_OUT_OF_RANGE", "Tổng tiền vượt phạm vi xử lý.", 422);
+      const [account] = await m.query("SELECT email FROM users WHERE id=$1", [
+        owner,
+      ]);
+      const deliveryEmail = (input.recipientEmail || account.email)
+        .trim()
+        .toLowerCase();
       const [booking] = await m.query(
-        "INSERT INTO bookings(owner_id,hold_id,total) VALUES($1,$2,$3) RETURNING *",
-        [owner, hold.id, total],
+        "INSERT INTO bookings(owner_id,hold_id,total,delivery_email) VALUES($1,$2,$3,$4) RETURNING *",
+        [owner, hold.id, total, deliveryEmail],
       );
       for (const seat of seats) {
         const [label] = await m.query("SELECT label FROM seats WHERE id=$1", [
@@ -204,6 +211,13 @@ export class BookingService {
             "LEGACY_DATA",
             "Đơn cũ chỉ dùng tra cứu, không tạo giao dịch thật.",
           );
+        if (booking.status === "CONFIRMED" && this.gateway.name === "MOCK") {
+          const [completed] = await m.query(
+            "SELECT * FROM payments WHERE booking_id=$1 AND status='SUCCEEDED' ORDER BY created_at DESC LIMIT 1",
+            [bookingId],
+          );
+          if (completed) return { ...completed, autoConfirmed: true, bookingCode: booking.id };
+        }
         if (booking.status !== "PENDING_PAYMENT")
           fail("BOOKING_CLOSED", "Đơn không còn chờ thanh toán.");
         const [hold] = await m.query(
@@ -232,6 +246,20 @@ export class BookingService {
     if (claimed) {
       try {
         const response = await this.gateway.charge(id, claimed.amount);
+        if (this.gateway.name === "MOCK" && response.status === "SUCCEEDED") {
+          await this.db.query(
+            "UPDATE payments SET checkout_url=$2 WHERE id=$1 AND status='UNKNOWN'",
+            [id, response.checkoutUrl || null],
+          );
+          await this.callback({
+            eventId: `mock:${id}`,
+            paymentId: id,
+            amount: claimed.amount,
+            currency: "VND",
+            status: "SUCCEEDED",
+            reference: response.reference,
+          });
+        } else {
         // Only verified callbacks issue tickets, never a browser redirect or checkout URL.
         await this.db.query(
           "UPDATE payments SET status=$2,checkout_url=$3 WHERE id=$1 AND status='UNKNOWN'",
@@ -245,11 +273,15 @@ export class BookingService {
             response.checkoutUrl || null,
           ],
         );
+        }
       } catch {
         /* UNKNOWN persists for provider reconciliation, never retry a new charge blindly. */
       }
     }
-    return (await this.db.query("SELECT * FROM payments WHERE id=$1", [id]))[0];
+    const [payment] = await this.db.query("SELECT * FROM payments WHERE id=$1", [id]);
+    return this.gateway.name === "MOCK" && payment.status === "SUCCEEDED"
+      ? { ...payment, autoConfirmed: true, bookingCode: bookingId }
+      : payment;
   }
   async callback(event: {
     eventId: string;
@@ -257,6 +289,7 @@ export class BookingService {
     amount: number;
     currency: "VND";
     status: "SUCCEEDED" | "FAILED";
+    reference?: string;
   }) {
     this.gateway.assertConfigured();
     const [purpose] = await this.db.query(
@@ -310,9 +343,10 @@ export class BookingService {
       );
       if (payment.status === "SUCCEEDED")
         return { accepted: true, duplicate: true };
-      await m.query("UPDATE payments SET status=$1 WHERE id=$2", [
+      await m.query("UPDATE payments SET status=$1,provider_transaction_id=COALESCE($3,provider_transaction_id) WHERE id=$2", [
         event.status,
         payment.id,
+        event.reference || null,
       ]);
       if (event.status === "FAILED")
         return { accepted: true, status: "FAILED" };
@@ -400,12 +434,13 @@ export class BookingService {
         [booking.owner_id],
       );
       if (ownerUser?.email) {
+        const recipientEmail = booking.delivery_email || ownerUser.email;
         const notifPayload = {
           eventId: randomBytes(16).toString("hex"),
           eventType: "booking.confirmed",
           schemaVersion: 1,
           occurredAt: clock.now.toISOString(),
-          recipientEmail: ownerUser.email,
+          recipientEmail,
           booking: { id: booking.id, total: booking.total, createdAt: booking.created_at },
           customer: { id: booking.owner_id, email: ownerUser.email, name: ownerUser.display_name },
           movie: { id: show.movie_id, title: show.title },
@@ -415,7 +450,7 @@ export class BookingService {
         await m.query(
           `INSERT INTO notification_outbox(event_id, event_type, booking_id, recipient_email, payload)
            VALUES($1, 'booking.confirmed', $2, $3, $4) ON CONFLICT(event_id) DO NOTHING`,
-          [notifPayload.eventId, booking.id, ownerUser.email, JSON.stringify(notifPayload)],
+          [notifPayload.eventId, booking.id, recipientEmail, JSON.stringify(notifPayload)],
         );
       }
       await m.query(

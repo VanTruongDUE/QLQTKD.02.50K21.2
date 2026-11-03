@@ -44,3 +44,23 @@
 | Bàn giao             | README, env example/setup, truy vết, kết quả test, AI Log, Git                               | Chỉ ghi phần đã triển khai; đổi/hoàn, phê duyệt, CRUD, n8n và cổng thật còn lại. Không tuyên bố hoàn tất TP3                                                                                |
 
 Các cập nhật chat giải thích giả định/phạm vi, kết quả môi trường, lỗi typecheck, test đồng thời, lỗi mobile/SMTP và kết quả sửa. Không sử dụng sub-agent trong lượt này.
+
+## Bổ sung ngày 03/11/2026 — audit full-stack và dashboard quản lý
+
+- Kiểm tra lại Node.js 24.14.0, pnpm 10.32.1, Git 2.52.0 và Docker CLI 29.9.2; Docker Engine hiện chưa chạy nên không khẳng định stack container sẵn sàng.
+- Gỡ endpoint checkout demo cũ khỏi catalog controller. Checkout web hiện bắt đầu bằng hold, tạo booking và tạo payment qua API backend; không còn tạo ticket/QR giả bằng `Math.random` trong callback UI.
+- Bổ sung API dashboard quản lý có phạm vi `staff_cinema_assignments`, bộ lọc ngày/rạp và các số liệu đơn, vé, check-in, thu, hoàn, net, đối soát, phim và hàng đợi đổi/hoàn.
+- Nối dashboard vào `/manager/accounts`, vẫn giữ quản lý hồ sơ và nhân viên. Chọn phong cách `true-black-flat` của design-taste-frontend cho màn hình vận hành: nền đen phẳng, phân cấp bằng tone, màu nhấn dành cho dữ liệu.
+- Loại bỏ fallback danh mục phim/suất chiếu và fallback sơ đồ ghế khi API lỗi; giao diện báo không khả dụng để tránh che lỗi dữ liệu thật.
+- Kết quả kiểm tra lượt này: API typecheck, web typecheck và web production build đều đạt. Chi tiết giới hạn và lệnh chạy được ghi tại `docs/QA_AUDIT_REPORT.md`.
+
+## Bổ sung ngày 03/11/2026 — hoàn thiện backend giao dịch và worker
+
+- Rà soát lại backend theo prompt full-scope, giữ nguyên frontend hiện có và không reset dữ liệu.
+- Bổ sung migration `PaymentProviderReference1793754000001` để lưu mã giao dịch MoMo tách khỏi UUID nội bộ.
+- Hoàn thiện adapter MoMo sandbox cho create, refund, query payment/refund; callback lưu `provider_transaction_id`, kiểm tra HMAC raw IPN, số tiền và VND. Thêm các biến `MOMO_REFUND_URL`, `MOMO_QUERY_URL`, `MOMO_REFUND_QUERY_URL` vào `.env.example`.
+- Khi nhà cung cấp trả thành công khoản hoàn, backend gọi luồng `refundEvent` idempotent; PENDING/UNKNOWN vẫn giữ trạng thái để đối soát, không tự suy diễn thành thất bại.
+- Sửa notification outbox worker: transaction chỉ claim bản ghi; gọi webhook ngoài transaction, sau đó cập nhật trạng thái bằng giao dịch ngắn, tránh giữ connection/lock trong lúc chờ mạng.
+- Sửa lỗi SQL dashboard: CTE metrics thiếu `FROM scoped`, chuẩn hóa bigint/numeric thành số JSON và lọc occupancy theo múi giờ `Asia/Ho_Chi_Minh`. Thêm test dashboard với dữ liệu đã biết.
+- Kiểm chứng sau sửa: `pnpm db:migrate` áp dụng migration mới; `pnpm --filter @starlight/api typecheck`, build đạt; toàn bộ backend `pnpm --filter @starlight/api test` đạt 73/73 (thêm test chữ ký IPN MoMo); Docker Compose API/PostgreSQL/worker/Mailpit đang Up.
+- Giới hạn còn lại: chưa chạy giao dịch MoMo sandbox thật vì môi trường chưa có credential và IPN HTTPS công khai; chưa đánh giá tải nhiều instance/production.

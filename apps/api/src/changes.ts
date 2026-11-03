@@ -719,7 +719,7 @@ export class ChangesService {
         }
         return (
           await m.query(
-            "WITH u AS (UPDATE refunds SET status='UNKNOWN' WHERE id=$1 AND status='CREATED' RETURNING *) SELECT u.*,p.provider_reference FROM u JOIN payments p ON p.id=u.payment_id",
+            "WITH u AS (UPDATE refunds SET status='UNKNOWN' WHERE id=$1 AND status='CREATED' RETURNING *) SELECT u.*,p.provider_transaction_id,p.provider_reference FROM u JOIN payments p ON p.id=u.payment_id",
             [id],
           )
         )[0];
@@ -728,7 +728,7 @@ export class ChangesService {
       try {
         const r = await this.gateway.refund(
           id,
-          claimed.payment_id,
+          claimed.provider_transaction_id || claimed.provider_reference,
           claimed.amount,
         );
         if (r.status === "PENDING")
@@ -744,6 +744,15 @@ export class ChangesService {
             currency: "VND",
             status: "FAILED",
           });
+        if (r.status === "SUCCEEDED")
+          await this.refundEvent({
+            eventId: `submission:${id}`,
+            id,
+            amount: claimed.amount,
+            currency: "VND",
+            status: "SUCCEEDED",
+            reference: r.reference,
+          });
       } catch {
         /* Keep UNKNOWN and the reservation until verified reconciliation. */
       }
@@ -755,6 +764,7 @@ export class ChangesService {
     amount: number;
     currency: "VND";
     status: "SUCCEEDED" | "FAILED";
+    reference?: string;
   }) {
     return this.db.transaction(async (m) => {
       const [ref] = await m.query(
@@ -784,9 +794,10 @@ export class ChangesService {
       if (await this.deduplicate(m, event.eventId, event))
         return { accepted: true, duplicate: true };
       if (p.status === "SUCCEEDED") return { accepted: true, duplicate: true };
-      await m.query("UPDATE payments SET status=$2 WHERE id=$1", [
+      await m.query("UPDATE payments SET status=$2,provider_transaction_id=COALESCE($3,provider_transaction_id) WHERE id=$1", [
         p.id,
         event.status,
+        event.reference || null,
       ]);
       if (event.status === "FAILED") {
         if (!r.exchange_committed)
@@ -902,9 +913,10 @@ export class ChangesService {
           "EVENT_CONFLICT",
           "Nhà cung cấp mâu thuẫn kết quả; cần điều tra, không tự ghi đè.",
         );
-      await m.query("UPDATE refunds SET status=$2 WHERE id=$1", [
+      await m.query("UPDATE refunds SET status=$2,provider_reference=COALESCE($3,provider_reference) WHERE id=$1", [
         event.id,
         event.status,
+        event.reference || null,
       ]);
       if (!r) {
         await m.query("UPDATE reconciliation_cases SET status=$2 WHERE id=$1", [

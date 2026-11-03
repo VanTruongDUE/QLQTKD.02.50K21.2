@@ -205,6 +205,20 @@ async function settle(r: any, status: "SUCCEEDED" | "FAILED" = "SUCCEEDED") {
     });
 }
 
+it("manager dashboard aggregates scoped revenue, tickets and occupancy", async () => {
+  await purchase();
+  const today = new Date().toISOString().slice(0, 10);
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const response = await http(`/admin/dashboard?dateFrom=${today}&dateTo=${tomorrow}`, undefined, "manager");
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body.metrics.confirmedOrders).toBeGreaterThanOrEqual(1);
+  expect(body.metrics.issuedTickets).toBeGreaterThanOrEqual(1);
+  expect(body.metrics.received).toBeGreaterThanOrEqual(85000);
+  expect(body.occupancy.length).toBeGreaterThanOrEqual(1);
+  expect(body.occupancy[0].totalSeats).toBe(4);
+});
+
 it("owns data, denies escalation and isolates staff/manager endpoints", async () => {
   const f = await purchase();
   expect((await http(`/bookings/${f.b.id}`, undefined, "other")).status).toBe(

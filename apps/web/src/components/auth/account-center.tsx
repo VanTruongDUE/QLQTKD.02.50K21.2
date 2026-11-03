@@ -7,7 +7,7 @@ import { Profile, useAuth } from "./auth-provider";
 type Cinema = { id: string; name: string };
 type Staff = Profile & { locked: boolean; cinemaIds: string[] };
 
-export function AccountCenter({ onClose }: { onClose(): void }) {
+export function AccountCenter({ onClose, embedded = false }: { onClose(): void; embedded?: boolean }) {
   const { profile, request, refreshProfile, logout } = useAuth();
   const [displayName, setDisplayName] = useState(profile?.display_name || "");
   const [phone, setPhone] = useState(profile?.phone || "");
@@ -34,7 +34,7 @@ export function AccountCenter({ onClose }: { onClose(): void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[75] overflow-y-auto bg-black/80 p-4 backdrop-blur-md">
+    <div className={embedded ? "manager-account-embedded" : "fixed inset-0 z-[75] overflow-y-auto bg-black/80 p-4 backdrop-blur-md"}>
       <div className="mx-auto my-8 max-w-5xl rounded-2xl border border-[#2b2f45] bg-[#11131e] p-5 shadow-2xl sm:p-7">
         <div className="mb-6 flex items-start justify-between border-b border-[#272a3d] pb-5">
           <div><p className="text-xs font-bold text-amber-400">{roleLabel(profile.role)}</p><h2 className="mt-1 text-xl font-extrabold">Quản lý tài khoản</h2><p className="mt-1 text-sm text-zinc-500">{profile.email}</p></div>
@@ -66,7 +66,7 @@ function StaffManagement({ request }: { request: <T>(path: string, init?: Reques
   const [cinemas, setCinemas] = useState<Cinema[]>([]);
   const [form, setForm] = useState({ email: "", password: "", cinemaId: "" });
   const [error, setError] = useState("");
-  const load = () => Promise.all([request<Staff[]>("/admin/staff"), fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api/v1"}/cinemas`).then((r) => r.json())]).then(([s, c]) => { setStaff(s); setCinemas(c); if (!form.cinemaId && c[0]) setForm((x) => ({ ...x, cinemaId: c[0].id })); });
+  const load = () => Promise.all([request<Staff[]>("/admin/staff"), fetch(`${process.env.NEXT_PUBLIC_API_URL || "/api/v1"}/cinemas`).then((r) => r.json())]).then(([s, c]) => { setStaff(s); setCinemas(c); if (!form.cinemaId && c[0]) setForm((x) => ({ ...x, cinemaId: c[0].id })); });
   useEffect(() => { load().catch((e) => setError(e.message)); }, []);
   const create = async (event: FormEvent) => {
     event.preventDefault(); setError("");

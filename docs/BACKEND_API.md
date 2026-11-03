@@ -4,7 +4,7 @@ Yêu cầu mới chỉ sửa backend, contracts tương thích, cấu hình back
 
 ## Trạng thái và cách chạy
 
-API dùng NestJS/TypeORM/PostgreSQL hiện có. Test chạy database `starlight_test`, thêm dữ liệu riêng, không reset database người dùng. Migration mới chỉ được áp dụng trong test, chưa chạy trên database chính. Không có cổng thanh toán thật được cấu hình hoặc adapter nhà cung cấp nào trong mã gốc. Bản này chủ động trả **503 PAYMENT_NOT_CONFIGURED**, không thu/hoàn/phát hành vé giả để lấp chỗ thiếu.
+API dùng NestJS/TypeORM/PostgreSQL hiện có. Test chạy database `starlight_test`, thêm dữ liệu riêng, không reset database người dùng. Adapter MoMo sandbox đã được triển khai nhưng chỉ hoạt động khi người vận hành cấu hình credential, redirect URL và IPN HTTPS; thiếu cấu hình vẫn trả **503 PAYMENT_NOT_CONFIGURED**, không thu/hoàn/phát hành vé giả.
 
 ```powershell
 pnpm.cmd install --frozen-lockfile
@@ -30,6 +30,7 @@ Các biến backend khác: `DATABASE_URL`, `JWT_SECRET`, `QR_SECRET` (hai secret
 | Operations1793667600000 | COUNTER/GATE → STAFF, giữ UUID và phân công; thêm locked/profile, khóa tài khoản `@starlight.demo` cũ và thu hồi session; thêm provenance cho đơn, phạm vi danh mục, đổi/hoàn, phân bổ tiền, audit, nhận combo; bỏ unique request_id trên khóa vé để một yêu cầu có nhiều vé |
 | ProviderEvents1793667600001 | ID sự kiện nhà cung cấp chuyển UUID → text; giữ giá trị cũ, cho phép ID nhà cung cấp thực tế |
 | CatalogProvenance1793667600002 | Gắn danh mục có sẵn là LEGACY_DEMO, bản ghi mới mặc định OPERATIONAL; public API và giữ ghế không sử dụng danh mục legacy |
+| PaymentProviderReference1793754000001 | Lưu `payments.provider_transaction_id` và index để refund/query MoMo dùng đúng mã giao dịch nhà cung cấp |
 
 Không xóa đơn, vé, tiền, check-in hay lịch sử cũ; không sửa số tiền/trạng thái thanh toán hoặc policy_version cũ. Đơn cũ giữ DEMO-1.0, được đánh dấu LEGACY_DEMO và không dùng làm bằng chứng thu thật hoặc cơ sở hoàn tiền. Danh mục cũ không bị đổi tên, hủy lịch hay xóa; public không quảng bá chúng như dữ liệu vận hành. Quản lý được đọc danh mục/đơn trong phạm vi để rà soát; ghi danh mục yêu cầu rạp vận hành.
 
@@ -50,7 +51,7 @@ C = CUSTOMER, S = STAFF, M = MANAGER. M **không** được check-in hoặc nh�
 | Method / path | Quyền | Input / kết quả chính |
 | --- | --- | --- |
 | GET /health | Public | `{ok:true}` khi DB kết nối được |
-| GET /cinemas, /movies, /products, /showtimes | Public | Danh mục OPERATIONAL, giữ tên field hiện có |
+| GET /cinemas, /movies, /products, /showtimes | Public | Danh mục OPERATIONAL; products có ảnh, mô tả, giá gốc, huy hiệu và khoảng số người gợi ý |
 | GET /showtimes/:id/seats | Public | `{serverTime,seats:[{id,label,status}]}`; status AVAILABLE/HELD/SOLD |
 | POST /auth/register | Public | `{email,password}`; tạo CUSTOMER; field role bị từ chối |
 | POST /auth/login | Public | `{email,password}` → accessToken, user, refresh cookie |
@@ -59,8 +60,8 @@ C = CUSTOMER, S = STAFF, M = MANAGER. M **không** được check-in hoặc nh�
 | GET/PATCH /me/profile | C/S/M | PATCH `{displayName,phone}`, không nhận role/email/locked |
 | POST /me/password | C/S/M | `{currentPassword,newPassword}`; phải đăng nhập lại |
 | POST /holds **K** | C | `{showtimeId,seatIds}`; 1–8 ghế không trùng; expiresAt/serverTime |
-| POST /bookings **K** | C | `{holdId,products:[{productId,quantity}]}`; backend snapshot giá |
-| POST /bookings/:id/payments **K** | C, chủ đơn | Tạo checkout qua adapter; hiện 503 nếu đúng chủ, 404 nếu không đúng chủ |
+| POST /bookings **K** | C | `{holdId,recipientEmail,products:[{productId,quantity}]}`; backend snapshot giá và email nhận vé |
+| POST /bookings/:id/payments **K** | C, chủ đơn | Tạo checkout MoMo qua adapter; 503 khi thiếu cấu hình, 404 nếu không đúng chủ |
 | GET /me/bookings, /me/tickets | C | Đơn/vé chính mình; QR chỉ được cấp cho chủ vé |
 | GET /bookings/:id | C chủ đơn / S,M cùng rạp | Đơn + items/products/payments, gồm checkout_url/status |
 | GET /tickets/:id | C chủ vé / S,M cùng rạp | Vé; chỉ C nhận qrToken/qrImage |
@@ -85,13 +86,14 @@ C = CUSTOMER, S = STAFF, M = MANAGER. M **không** được check-in hoặc nh�
 | PATCH /admin/catalog/:kind/:id **K** | M | Đủ các field schema; không đổi phạm vi; không sửa suất đã có hold/đơn |
 | GET /admin/bookings | M | 100 đơn mới nhất trong rạp, gồm provenance |
 | GET /admin/reports | M | Tổng thu SUCCEEDED và tổng hoàn SUCCEEDED, chỉ đơn OPERATIONAL; VND bigint dạng chuỗi |
+| GET /admin/dashboard | M | Lọc `dateFrom`, `dateTo`, tùy chọn `cinemaId`, `movieId`, `showtimeId`; trả metrics, daily, movies, occupancy, pendingRefunds trong phạm vi phân công |
 | GET /admin/audit | M | 200 thao tác mới nhất có cinema_id trong phạm vi |
 | GET /admin/reconciliation | M | Các khoản thu cần đối soát trong rạp |
 | POST /admin/reconciliation/:id/approve-refund **K** | M | `{reason}`; tạo nghĩa vụ hoàn CREATED từ khoản thu SUCCEEDED có cờ đối soát |
-| POST /admin/reconciliation/refunds/:id/dispatch | M | Gửi khoản đã duyệt; CAS trạng thái ngăn gửi trùng; hiện 503 nếu chưa có adapter |
+| POST /admin/reconciliation/refunds/:id/dispatch | M | Gửi khoản đã duyệt qua MoMo; CAS trạng thái ngăn gửi trùng; 503 khi thiếu cấu hình |
 | POST /admin/reconciliation/:kind/:id/query | M | kind payment/refund; truy vấn nhà cung cấp, chỉ cập nhật từ bằng chứng đã xác minh |
 
-`/payments/:id/simulate` và `/webhooks/payments/demo` **đã xóa route**, trả 404 kể cả gửi HMAC cũ. Không có webhook của nhà cung cấp cụ thể ở bản này; không có đường HTTP khác cho người dùng gửi `SUCCEEDED`.
+`/payments/:id/simulate`, `/webhooks/payments/demo` và checkout giả **đã xóa route**. Webhook thật là `POST /webhooks/payments/momo`; backend kiểm tra chữ ký trên raw body, orderId, amount, VND và trạng thái trước khi callback idempotent. Không có đường HTTP cho client tự gửi `SUCCEEDED`.
 
 ## Payload để nối frontend
 
@@ -134,13 +136,17 @@ Không có DELETE phá lịch sử. Dùng active=false cho phim/combo/phòng khi
 
 ## Adapter và thông tin vận hành còn thiếu
 
-`src/payments.ts` là port **chưa cấu hình**, không phải tích hợp VNPay/MoMo/Stripe hoặc cổng nào khác. `charge(paymentId,amount)`, `refund(refundId,originalPaymentId,amount)` phải dùng ID bền vững làm idempotency/merchant reference. Adapter cụ thể chịu trách nhiệm lưu/tra provider reference tương ứng, xử lý timeout, xác minh raw webhook đúng tài liệu cổng, merchant/order ID, số tiền, VND, trạng thái và ID sự kiện. Query trả `VerifiedMoneyEvent` gồm eventId/id/amount/currency/status; manager chỉ yêu cầu query, không tự cung cấp kết quả. Event IDs cần namespace theo provider khi tích hợp thêm provider.
+`src/payments.ts` hiện có adapter MoMo sandbox. `charge` gọi `/v2/gateway/api/create`; `refund` gọi `/v2/gateway/api/refund`; query payment/refund gọi endpoint query tương ứng. `provider_transaction_id` được lưu từ IPN để refund không dùng nhầm internal UUID. Webhook MoMo được xác minh HMAC-SHA256 trên raw body và chỉ callback khi orderId/amount/VND khớp. Timeout giữ UNKNOWN/PENDING để đối soát, không tự charge lại.
 
-Còn cần người vận hành chọn cổng, tài khoản merchant/sandbox, phương thức thu/hoàn hỗ trợ, endpoint môi trường, signing/verification credentials, callback HTTPS và redirect URL. Sau đó phải viết adapter và route webhook cụ thể, ánh xạ internal payment/refund ID, cấu hình provider trong cả API/worker và chạy contract test với sandbox. **Chỉ thêm secret vào .env chưa làm cổng hoạt động.** Không dán secret vào chat.
+Còn cần người vận hành cung cấp `MOMO_PARTNER_CODE`, `MOMO_ACCESS_KEY`, `MOMO_SECRET_KEY`, redirect URL hợp lệ và IPN HTTPS công khai. **Chỉ thêm secret vào .env chưa chứng minh giao dịch sandbox thành công.** Không dán secret vào chat.
 
 Query đã có đường xử lý PENDING/UNKNOWN theo bằng chứng terminal. Còn cần adapter/job đối soát tự động, chính sách retry của từng cổng và xử lý hỗ trợ khi provider trả kết quả mâu thuẫn. Khoản hoàn FAILED sau khi đổi đã cam kết hoặc hoàn một phần được giữ trong hàng đối soát; chưa có thao tác tự động gửi một khoản hoàn mới cho trường hợp này. Không sửa tay trạng thái SUCCEEDED hay mở khóa vé để bỏ qua công nợ.
 
 SMTP dùng Nodemailer sẵn có, bổ sung SMTP_FROM, SMTP_USER/PASSWORD, SMTP_PORT, SMTP_SECURE; production yêu cầu TLS. Thiếu SMTP_HOST hoặc SMTP_FROM thì outbox vẫn chờ, không đánh SENT giả. Mailpit là hộp thư test local, không chứng minh email Internet. Cấu hình `.env` cũ được giữ nguyên; nếu dùng Mailpit để kiểm thử local, SMTP_PORT=1025, SMTP_HOST=127.0.0.1 (hoặc mailpit khi trong Docker) và SMTP_FROM do người vận hành cấu hình. Không gửi email cho đơn LEGACY_DEMO.
+
+`recipientEmail` là địa chỉ nhận thông báo của riêng đơn hàng và được lưu tại `bookings.delivery_email`. Nó có thể khác email tài khoản nhưng không thay đổi chủ sở hữu vé, quyền xem QR, đổi/trả hoặc hoàn tiền. Nếu client gửi lại cùng khóa idempotency với email khác, backend từ chối do payload không khớp.
+
+`GET /movies` và `GET /showtimes` nhận tùy chọn `cinemaId`. Danh mục công khai chỉ trả phim hoạt động và suất `SCHEDULED` chưa bắt đầu, từ ngày hiện tại đến hết 4 ngày kế tiếp theo múi giờ `Asia/Ho_Chi_Minh`. Phim không còn suất hợp lệ trong khoảng này không xuất hiện.
 
 ## Frontend được giữ nguyên, chưa nối đầy đủ
 
@@ -159,6 +165,6 @@ Không còn lệnh seed/demo login backend. Khi nối lại frontend, dùng đú
 
 ## Kiểm thử và ranh giới nghiệm thu
 
-`pnpm test`, `pnpm typecheck`, `pnpm --filter @starlight/api build`, `pnpm lint`. Backend test gồm 18 booking, 20 check-in và bộ operations bổ sung; kết quả cuối ghi ở TEST_RESULTS.md. Test tiền gọi core qua TestGateway trong `test/gateway.ts`, không đăng ký endpoint giả lập vào Nest. HMAC demo chỉ được kiểm tra rằng route đã biến mất; chưa có bằng chứng xác minh chữ ký webhook của nhà cung cấp thực tế.
+`pnpm test`, `pnpm typecheck`, `pnpm --filter @starlight/api build`, `pnpm lint`. Backend test hiện chạy 72 ca PostgreSQL/API/SMTP; test tiền nội bộ dùng TestGateway trong `test/gateway.ts`, không đăng ký endpoint giả lập vào Nest. Chưa có giao dịch MoMo sandbox thật vì chưa có credential/IPN public trong môi trường này.
 
 Đã kiểm tra migration với schema cũ trong database test, first-manager CLI function, khóa phiên, phạm vi, tranh ghế, callback lặp, check-in, đổi nhiều vé, ba mức chênh lệch, combo, deadline, hoàn chưa rõ/một phần/thất bại và đối soát tiền chênh lệch muộn. Chưa kiểm thử production, tải lớn/nhiều instance, provider thật, SMTP Internet, sự cố suất đã bán, job đối soát tự động hoặc frontend xuyên suốt với API mới. Các giới hạn bên ngoài không được thay bằng dữ liệu giả runtime.

@@ -11,7 +11,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Movie, Showtime, CinemaLocation, AgeRating, MovieFormat } from "../types";
-import { MOVIES, SHOWTIMES } from "../mock-data";
+import { MOVIES } from "../mock-data";
 
 interface Step1ShowtimesProps {
   cinema: CinemaLocation;
@@ -20,15 +20,42 @@ interface Step1ShowtimesProps {
   onSelectShowtime: (movie: Movie, showtime: Showtime) => void;
 }
 
-const DATES = [
-  { dayName: "Hôm nay", dateStr: "02/11", fullDate: "2026-11-02" },
-  { dayName: "Thứ 3", dateStr: "03/11", fullDate: "2026-11-03" },
-  { dayName: "Thứ 4", dateStr: "04/11", fullDate: "2026-11-04" },
-  { dayName: "Thứ 5", dateStr: "05/11", fullDate: "2026-11-05" },
-  { dayName: "Thứ 6", dateStr: "06/11", fullDate: "2026-11-06" },
-  { dayName: "Thứ 7", dateStr: "07/11", fullDate: "2026-11-07" },
-  { dayName: "Chủ nhật", dateStr: "08/11", fullDate: "2026-11-08" },
-];
+function vietnamTodayParts() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((part) => part.type === type)?.value);
+  return { year: value("year"), month: value("month"), day: value("day") };
+}
+
+function buildBookingDates() {
+  const today = vietnamTodayParts();
+  const firstDay = Date.UTC(today.year, today.month - 1, today.day, 12);
+  const weekday = new Intl.DateTimeFormat("vi-VN", {
+    weekday: "long",
+    timeZone: "Asia/Ho_Chi_Minh",
+  });
+
+  return Array.from({ length: 5 }, (_, index) => {
+    const date = new Date(firstDay + index * 86_400_000);
+    const fullDate = date.toISOString().slice(0, 10);
+    const formattedWeekday = weekday.format(date);
+    return {
+      dayName:
+        index === 0
+          ? "H\u00f4m nay"
+          : formattedWeekday.charAt(0).toUpperCase() + formattedWeekday.slice(1),
+      dateStr: `${fullDate.slice(8, 10)}/${fullDate.slice(5, 7)}`,
+      fullDate,
+    };
+  });
+}
+
+const DATES = buildBookingDates();
 
 const GENRES = [
   "Tất cả",
@@ -104,29 +131,38 @@ export function Step1Showtimes({
   selectedShowtime,
   onSelectShowtime,
 }: Step1ShowtimesProps) {
-  const [selectedDate, setSelectedDate] = useState("2026-11-02");
+  const [selectedDate, setSelectedDate] = useState(DATES[0].fullDate);
   const [selectedGenre, setSelectedGenre] = useState("Tất cả");
   const [selectedFormat, setSelectedFormat] = useState("Tất cả");
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
 
   // Dynamic Catalog State from PostgreSQL
-  const [movies, setMovies] = useState<Movie[]>(MOVIES);
-  const [showtimes, setShowtimes] = useState<Showtime[]>(SHOWTIMES);
+  const [movies, setMovies] = useState<Movie[]>([]);
+  const [showtimes, setShowtimes] = useState<Showtime[]>([]);
+  const [catalogError, setCatalogError] = useState("");
 
   useEffect(() => {
     let isMounted = true;
     async function loadCatalog() {
       try {
+        const query = /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(cinema.id)
+          ? `?cinemaId=${encodeURIComponent(cinema.id)}`
+          : "";
         const [moviesRes, showtimesRes] = await Promise.all([
-          fetch("/api/v1/movies").catch(() => null),
-          fetch("/api/v1/showtimes").catch(() => null),
+          fetch(`/api/v1/movies${query}`).catch(() => null),
+          fetch(`/api/v1/showtimes${query}`).catch(() => null),
         ]);
 
         if (!isMounted) return;
+        if (!moviesRes?.ok || !showtimesRes?.ok) {
+          setCatalogError("Không thể tải danh mục phim và suất chiếu. Vui lòng thử lại.");
+          return;
+        }
+        setCatalogError("");
 
         if (moviesRes && moviesRes.ok) {
           const rawMovies = await moviesRes.json();
-          if (Array.isArray(rawMovies) && rawMovies.length > 0) {
+          if (Array.isArray(rawMovies)) {
             const mappedMovies: Movie[] = rawMovies.map((m: any) => {
               const mockMatch = MOVIES.find(
                 (item) => item.title.toLowerCase().trim() === m.title.toLowerCase().trim()
@@ -157,8 +193,10 @@ export function Step1Showtimes({
 
         if (showtimesRes && showtimesRes.ok) {
           const rawShowtimes = await showtimesRes.json();
-          if (Array.isArray(rawShowtimes) && rawShowtimes.length > 0) {
-            const mappedShowtimes: Showtime[] = rawShowtimes.map((s: any) => {
+          if (Array.isArray(rawShowtimes)) {
+            const mappedShowtimes: Showtime[] = rawShowtimes
+              .filter((s: any) => s.status === "SCHEDULED" && new Date(s.starts_at).getTime() > Date.now())
+              .map((s: any) => {
               const startDate = new Date(s.starts_at);
               // UTC+7 Vietnam local time
               const hours = String((startDate.getUTCHours() + 7) % 24).padStart(2, "0");
@@ -187,12 +225,12 @@ export function Step1Showtimes({
                 totalSeats: 108,
                 availableSeats: 104,
               };
-            });
+              });
             setShowtimes(mappedShowtimes);
           }
         }
-      } catch (err) {
-        console.warn("Failed to load catalog from API, using fallback:", err);
+      } catch {
+        if (isMounted) setCatalogError("Không thể kết nối máy chủ danh mục. Vui lòng thử lại.");
       }
     }
 
@@ -203,7 +241,7 @@ export function Step1Showtimes({
   }, [cinema.id]);
 
   // Group showtimes for the selected date & format
-  const activePromo = DAY_PROMOS[selectedDate] || DAY_PROMOS["2026-11-02"];
+  const activePromo = DAY_PROMOS[selectedDate];
 
   // Filter movies and showtimes strictly dynamically by selected date
   const moviesWithShowtimes = movies.map((movie) => {
@@ -281,7 +319,7 @@ export function Step1Showtimes({
               Lịch Chiếu Phim Theo Ngày
             </span>
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 border border-purple-500/20 font-medium">
-              {totalShowtimesInDay} suất chiếu hôm nay
+              {totalShowtimesInDay} suất chiếu {selectedDate === DATES[0].fullDate ? "hôm nay" : "trong ngày"}
             </span>
           </div>
           <span className="text-xs text-zinc-400">
@@ -387,7 +425,9 @@ export function Step1Showtimes({
       </div>
 
       {/* Movie Showtime Cards with 4-Column Rectangular Showtime Slots */}
-      {moviesWithShowtimes.length === 0 ? (
+      {catalogError ? (
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-6 text-center text-sm text-rose-200">{catalogError}</div>
+      ) : moviesWithShowtimes.length === 0 ? (
         <div className="p-8 rounded-2xl bg-[#131520] border border-[#222538] text-center space-y-3">
           <Film className="w-10 h-10 text-purple-400/60 mx-auto" />
           <h4 className="text-base font-bold text-white">

@@ -39,7 +39,7 @@ export async function tick() {
   for (const row of rows) {
     try {
       const [booking] = await source.query(
-        "SELECT u.email,b.total FROM bookings b JOIN users u ON u.id=b.owner_id WHERE b.id=$1",
+        "SELECT COALESCE(b.delivery_email,u.email) AS email,b.total FROM bookings b JOIN users u ON u.id=b.owner_id WHERE b.id=$1",
         [row.booking_id],
       );
       await transport.sendMail({

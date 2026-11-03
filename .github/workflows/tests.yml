@@ -1,0 +1,101 @@
+name: Automated tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: starlight
+          POSTGRES_PASSWORD: starlight_test
+          POSTGRES_DB: starlight_test
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U starlight -d starlight_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      mailpit:
+        image: axllent/mailpit:v1.27
+        ports:
+          - 1025:1025
+          - 8025:8025
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://starlight:starlight_test@127.0.0.1:54329/starlight_test
+      TEST_DATABASE_URL: postgresql://starlight:starlight_test@127.0.0.1:54329/starlight_test
+      JWT_SECRET: starlight-ci-jwt-secret-at-least-32-characters
+      QR_SECRET: starlight-ci-qr-secret-at-least-32-characters
+      WEB_ORIGIN: http://127.0.0.1:3000
+      PAYMENT_MODE: mock
+      SMTP_FROM: Starlight CI <tickets@starlight.test>
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: 1025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test:coverage
+      - run: pnpm build
+      - name: Upload API coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-coverage
+          path: apps/api/coverage
+          if-no-files-found: warn
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Start isolated E2E stack
+        run: pnpm test:e2e:up
+      - name: Wait for application readiness
+        shell: bash
+        run: |
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:3100/api/v1/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose -f compose.test.yaml ps
+          docker compose -f compose.test.yaml logs --no-color
+          exit 1
+      - run: pnpm test:e2e
+      - name: Upload Playwright evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: warn
+      - name: Stop isolated E2E stack
+        if: always()
+        run: pnpm test:e2e:down

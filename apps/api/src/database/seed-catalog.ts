@@ -28,11 +28,142 @@ const DATES = [
   "2026-11-08",
 ];
 
+const PRODUCTS = [
+  {
+    name: "Combo Mini Starlight",
+    category: "combo",
+    price: 75000,
+    originalPrice: 90000,
+    description: "1 bắp rang bơ ngọt 60oz và 1 nước ngọt có ga 22oz.",
+    imageUrl: "/products/combo-mini.jpg",
+    recommendedMinPeople: 1,
+    recommendedMaxPeople: 1,
+    badge: "Tiết kiệm 15k",
+    iconName: "Popcorn",
+    sortOrder: 10,
+  },
+  {
+    name: "Combo Đôi Starlight",
+    category: "combo",
+    price: 135000,
+    originalPrice: 160000,
+    description: "1 bắp lớn vị phô mai hoặc caramel và 2 nước ngọt 32oz.",
+    imageUrl: "/products/combo-doi.jpg",
+    recommendedMinPeople: 2,
+    recommendedMaxPeople: 2,
+    badge: "Bán chạy nhất",
+    iconName: "Sparkles",
+    sortOrder: 20,
+  },
+  {
+    name: "Combo Gia Đình Vui Vẻ",
+    category: "combo",
+    price: 195000,
+    originalPrice: 240000,
+    description: "2 bắp lớn, 3 nước ngọt 32oz và 1 phần snack khoai tây.",
+    imageUrl: "/products/combo-gia-dinh.jpg",
+    recommendedMinPeople: 3,
+    recommendedMaxPeople: 4,
+    badge: "Gia đình yêu thích",
+    iconName: "Users",
+    sortOrder: 30,
+  },
+  {
+    name: "Khoai Tây Chiên Giòn / Snack Xúc Xích",
+    category: "snack",
+    price: 45000,
+    description: "Khoai tây chiên giòn hoặc xúc xích phô mai nướng nóng.",
+    imageUrl: "/products/snack-khoai-xuc-xich.jpg",
+    recommendedMinPeople: 1,
+    recommendedMaxPeople: 2,
+    badge: null,
+    iconName: "Coffee",
+    sortOrder: 40,
+  },
+  {
+    name: "Nâng Cấp Nước Đổi Vị",
+    category: "drink",
+    price: 15000,
+    description: "Đổi 1 nước ngọt sang trà đào cam sả hoặc trà sữa trân châu.",
+    imageUrl: "/products/nang-cap-nuoc.jpg",
+    recommendedMinPeople: 1,
+    recommendedMaxPeople: 1,
+    badge: "Tính trên 1 ly",
+    iconName: "Coffee",
+    sortOrder: 50,
+  },
+  {
+    name: "Vé Khu Game / Bowling Starlight",
+    category: "entertainment",
+    price: 35000,
+    originalPrice: 45000,
+    description: "1 giờ bowling hoặc 15 xu game thùng cho 1 người.",
+    imageUrl: "/products/game-bowling.jpg",
+    recommendedMinPeople: 1,
+    recommendedMaxPeople: 1,
+    badge: "Ưu đãi kèm vé 20%",
+    iconName: "Gamepad2",
+    sortOrder: 60,
+  },
+];
+
 export async function seedCatalog() {
   if (!source.isInitialized) await source.initialize();
 
   return source.transaction(async (m) => {
     console.log("Seeding operational catalog...");
+
+    for (const product of PRODUCTS) {
+      const [existing] = await m.query(
+        "SELECT id FROM products WHERE name=$1 AND provenance='OPERATIONAL' LIMIT 1",
+        [product.name],
+      );
+      if (!existing) {
+        await m.query(
+          `INSERT INTO products(
+            name, price, original_price, category, description, image_url,
+            recommended_min_people, recommended_max_people, badge, icon_name,
+            sort_order, active, provenance
+          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,'OPERATIONAL')`,
+          [
+            product.name,
+            product.price,
+            product.originalPrice ?? null,
+            product.category,
+            product.description,
+            product.imageUrl,
+            product.recommendedMinPeople,
+            product.recommendedMaxPeople,
+            product.badge,
+            product.iconName,
+            product.sortOrder,
+          ],
+        );
+      } else {
+        await m.query(
+          `UPDATE products SET
+            price=$2, original_price=$3, category=$4, description=$5,
+            image_url=$6, recommended_min_people=$7,
+            recommended_max_people=$8, badge=$9, icon_name=$10,
+            sort_order=$11, active=true
+           WHERE id=$1`,
+          [
+            existing.id,
+            product.price,
+            product.originalPrice ?? null,
+            product.category,
+            product.description,
+            product.imageUrl,
+            product.recommendedMinPeople,
+            product.recommendedMaxPeople,
+            product.badge,
+            product.iconName,
+            product.sortOrder,
+          ],
+        );
+      }
+    }
+    console.log(`Ensured ${PRODUCTS.length} operational add-on products.`);
 
     // 1. Ensure all 6 cinemas exist
     for (const c of CINEMAS) {

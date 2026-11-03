@@ -49,6 +49,7 @@ export type SeatType = "regular" | "vip" | "couple";
 
 export type Seat = {
   id: string;
+  serverId?: string;
   row: string;
   number: number;
   type: SeatType;
@@ -66,6 +67,9 @@ export type FnBItem = {
   originalPrice?: number;
   category: "combo" | "snack" | "drink" | "entertainment";
   iconName: string;
+  imageUrl: string;
+  recommendedMinPeople: number;
+  recommendedMaxPeople: number;
   isPopular?: boolean;
   badge?: string;
 };
@@ -80,6 +84,7 @@ export type PopcornStatus = "NOT_PICKED" | "PREPARING" | "PICKED_UP";
 
 export type Ticket = {
   id: string;
+  bookingId?: string;
   bookingCode: string; // e.g. "STL-894210"
   phone: string;
   customerName: string;
@@ -98,6 +103,13 @@ export type Ticket = {
   readyInMinutes?: number;
   qrToken?: string;
   qrImage?: string;
+  seatQrCodes?: {
+    ticketId: string;
+    seatLabel: string;
+    qrToken?: string;
+    qrImage?: string;
+    status: TicketStatus;
+  }[];
   ageVerified?: boolean;
   checkedInAt?: string;
   refundMethod?: "WALLET" | "ORIGINAL_PAYMENT";

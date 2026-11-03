@@ -332,6 +332,79 @@ export class OperationsController {
       [req.user.id],
     );
   }
+  @Get("admin/dashboard") @Roles("MANAGER") async dashboard(
+    @Req() req: AuthRequest,
+    @Query("dateFrom") dateFrom = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10),
+    @Query("dateTo") dateTo = new Date().toISOString().slice(0, 10),
+    @Query("cinemaId") cinemaId?: string,
+    @Query("movieId") movieId?: string,
+    @Query("showtimeId") showtimeId?: string,
+  ) {
+    const from = z.string().date().parse(dateFrom);
+    const to = z.string().date().parse(dateTo);
+    const scope = await this.db.query(
+      `SELECT c.id,c.name FROM cinemas c JOIN staff_cinema_assignments sa ON sa.cinema_id=c.id WHERE sa.user_id=$1 AND ($2::uuid IS NULL OR c.id=$2) ORDER BY c.name`,
+      [req.user.id, cinemaId || null],
+    );
+    if (cinemaId && !scope.length) fail("NOT_FOUND", "Rạp không thuộc phạm vi quản lý.", 404);
+    const params = [req.user.id, from, to, cinemaId || null, movieId || null, showtimeId || null];
+    const filter = `sa.user_id=$1 AND b.provenance='OPERATIONAL' AND b.created_at >= $2::date AND b.created_at < ($3::date + interval '1 day') AND ($4::uuid IS NULL OR a.cinema_id=$4) AND ($5::uuid IS NULL OR s.movie_id=$5) AND ($6::uuid IS NULL OR s.id=$6)`;
+    const [metrics] = await this.db.query(
+      `WITH scoped AS (SELECT DISTINCT b.id,b.status FROM bookings b JOIN holds h ON h.id=b.hold_id JOIN showtimes s ON s.id=h.showtime_id JOIN auditoriums a ON a.id=s.auditorium_id JOIN staff_cinema_assignments sa ON sa.cinema_id=a.cinema_id WHERE ${filter})
+       SELECT count(*) FILTER (WHERE status='CONFIRMED')::int AS "confirmedOrders",
+       COALESCE((SELECT count(*) FROM tickets t JOIN booking_items bi ON bi.id=t.item_id JOIN scoped x ON x.id=bi.booking_id WHERE t.status IN ('ISSUED','CHECKED_IN')),0)::int AS "issuedTickets",
+       COALESCE((SELECT count(*) FROM tickets t JOIN booking_items bi ON bi.id=t.item_id JOIN scoped x ON x.id=bi.booking_id WHERE t.status='ISSUED'),0)::int AS "eligibleTickets",
+       COALESCE((SELECT count(*) FROM tickets t JOIN booking_items bi ON bi.id=t.item_id JOIN scoped x ON x.id=bi.booking_id WHERE t.status='CHECKED_IN'),0)::int AS "checkedInTickets",
+       COALESCE((SELECT sum(p.amount) FROM payments p JOIN scoped x ON x.id=p.booking_id WHERE p.status='SUCCEEDED'),0)::bigint AS received,
+       COALESCE((SELECT sum(r.amount) FROM refunds r JOIN payments p ON p.id=r.payment_id JOIN scoped x ON x.id=p.booking_id WHERE r.status='SUCCEEDED'),0)::bigint AS refunded,
+       COALESCE((SELECT count(*) FROM reconciliation_cases r JOIN payments p ON p.id=r.payment_id JOIN scoped x ON x.id=p.booking_id WHERE r.status IN ('PENDING_APPROVAL','APPROVED')),0)::int AS "reconciliationCases"
+       FROM scoped`,
+      params,
+    );
+    const daily = await this.db.query(
+      `WITH days AS (SELECT generate_series($2::date,$3::date,interval '1 day')::date AS day), scoped AS (
+       SELECT DISTINCT b.id,date_trunc('day',b.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS day FROM bookings b JOIN holds h ON h.id=b.hold_id JOIN showtimes s ON s.id=h.showtime_id JOIN auditoriums a ON a.id=s.auditorium_id JOIN staff_cinema_assignments sa ON sa.cinema_id=a.cinema_id WHERE ${filter} AND b.status='CONFIRMED')
+       SELECT to_char(days.day,'YYYY-MM-DD') AS day,
+       COALESCE((SELECT sum(p.amount) FROM payments p JOIN scoped x ON x.id=p.booking_id WHERE p.status='SUCCEEDED' AND x.day=days.day),0)::bigint AS received,
+       COALESCE((SELECT sum(r.amount) FROM refunds r JOIN payments p ON p.id=r.payment_id JOIN scoped x ON x.id=p.booking_id WHERE r.status='SUCCEEDED' AND x.day=days.day),0)::bigint AS refunded,
+       COALESCE((SELECT count(*) FROM tickets t JOIN booking_items bi ON bi.id=t.item_id JOIN scoped x ON x.id=bi.booking_id WHERE x.day=days.day AND t.status IN ('ISSUED','CHECKED_IN')),0)::int AS tickets
+       FROM days ORDER BY days.day`, params);
+    const movies = await this.db.query(
+      `SELECT m.id AS "movieId",m.title,count(DISTINCT t.id)::int AS tickets,count(DISTINCT ci.ticket_id)::int AS "checkedInTickets"
+       FROM movies m JOIN showtimes s ON s.movie_id=m.id JOIN auditoriums a ON a.id=s.auditorium_id JOIN staff_cinema_assignments sa ON sa.cinema_id=a.cinema_id
+       LEFT JOIN booking_items bi ON bi.showtime_id=s.id LEFT JOIN bookings b ON b.id=bi.booking_id AND b.status='CONFIRMED' AND b.created_at >= $2::date AND b.created_at < ($3::date + interval '1 day')
+       LEFT JOIN tickets t ON t.item_id=bi.id AND t.status IN ('ISSUED','CHECKED_IN') LEFT JOIN check_ins ci ON ci.ticket_id=t.id
+       WHERE sa.user_id=$1 AND m.provenance='OPERATIONAL' AND ($4::uuid IS NULL OR a.cinema_id=$4) AND ($5::uuid IS NULL OR m.id=$5) AND ($6::uuid IS NULL OR s.id=$6)
+       GROUP BY m.id,m.title ORDER BY tickets DESC,m.title LIMIT 20`, params);
+    const occupancy = await this.db.query(
+      `SELECT s.id AS "showtimeId",m.title,a.name AS room,s.starts_at AS "startsAt",
+       count(ss.seat_id)::int AS "totalSeats",
+       count(ss.ticket_id)::int AS "soldSeats",
+       CASE WHEN count(ss.seat_id)=0 THEN 0 ELSE round(count(ss.ticket_id)::numeric / count(ss.seat_id)::numeric * 100, 1) END AS "occupancyPercent"
+       FROM showtimes s JOIN movies m ON m.id=s.movie_id JOIN auditoriums a ON a.id=s.auditorium_id
+       JOIN showtime_seats ss ON ss.showtime_id=s.id JOIN staff_cinema_assignments sa ON sa.cinema_id=a.cinema_id
+       WHERE sa.user_id=$1 AND (s.starts_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= $2::date AND (s.starts_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= $3::date AND m.provenance='OPERATIONAL'
+       AND ($4::uuid IS NULL OR a.cinema_id=$4) AND ($5::uuid IS NULL OR s.movie_id=$5) AND ($6::uuid IS NULL OR s.id=$6)
+       GROUP BY s.id,m.title,a.name,s.starts_at ORDER BY "occupancyPercent" DESC,s.starts_at LIMIT 20`, params);
+    const pendingRefunds = await this.db.query(
+      `SELECT r.id,r.kind,r.status,r.created_at AS "createdAt",b.id AS "bookingId",u.email AS customer,m.title
+       FROM change_requests r JOIN bookings b ON b.id=r.booking_id JOIN users u ON u.id=b.owner_id JOIN holds h ON h.id=b.hold_id JOIN showtimes s ON s.id=h.showtime_id JOIN movies m ON m.id=s.movie_id JOIN auditoriums a ON a.id=s.auditorium_id JOIN staff_cinema_assignments sa ON sa.cinema_id=a.cinema_id
+       WHERE sa.user_id=$1 AND r.status IN ('PENDING_APPROVAL','APPROVED','PROCESSING') AND r.created_at >= $2::date AND r.created_at < ($3::date + interval '1 day') AND ($4::uuid IS NULL OR a.cinema_id=$4) ORDER BY r.created_at DESC LIMIT 8`, params.slice(0, 4));
+    metrics.received = Number(metrics.received || 0);
+    metrics.refunded = Number(metrics.refunded || 0);
+    metrics.net = Number(metrics.received) - Number(metrics.refunded);
+    for (const item of daily) {
+      item.received = Number(item.received || 0);
+      item.refunded = Number(item.refunded || 0);
+      item.tickets = Number(item.tickets || 0);
+    }
+    for (const item of occupancy) {
+      item.totalSeats = Number(item.totalSeats || 0);
+      item.soldSeats = Number(item.soldSeats || 0);
+      item.occupancyPercent = Number(item.occupancyPercent || 0);
+    }
+    return { filters: { dateFrom: from, dateTo: to, cinemaId: cinemaId || null, movieId: movieId || null, showtimeId: showtimeId || null }, cinemas: scope, metrics, daily, movies, occupancy, pendingRefunds };
+  }
 }
 
 const money = z.number().int().min(0).max(100000000);

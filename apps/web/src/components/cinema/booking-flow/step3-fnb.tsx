@@ -10,14 +10,17 @@ import {
   Plus,
   Minus,
 } from "lucide-react";
-import { FNB_ITEMS } from "../mock-data";
+import { FnBItem } from "../types";
 
 interface Step3FnBProps {
+  items: FnBItem[];
+  loading: boolean;
+  error: string;
   quantities: Record<string, number>;
   onQuantityChange: (itemId: string, delta: number) => void;
 }
 
-export function Step3FnB({ quantities, onQuantityChange }: Step3FnBProps) {
+export function Step3FnB({ items, loading, error, quantities, onQuantityChange }: Step3FnBProps) {
   const getIcon = (iconName: string) => {
     switch (iconName) {
       case "Popcorn":
@@ -35,7 +38,7 @@ export function Step3FnB({ quantities, onQuantityChange }: Step3FnBProps) {
     }
   };
 
-  const fnbTotal = FNB_ITEMS.reduce((sum, item) => {
+  const fnbTotal = items.reduce((sum, item) => {
     return sum + (quantities[item.id] || 0) * item.price;
   }, 0);
 
@@ -65,9 +68,18 @@ export function Step3FnB({ quantities, onQuantityChange }: Step3FnBProps) {
         </div>
       </div>
 
-      {/* Combos Grid */}
+      {/* Products Grid */}
+      {loading ? (
+        <div className="rounded-2xl border border-[#222538] bg-[#131520] p-6 text-sm text-zinc-400">
+          Đang tải sản phẩm đi kèm...
+        </div>
+      ) : error ? (
+        <div role="alert" className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-200">
+          {error}
+        </div>
+      ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-        {FNB_ITEMS.map((item) => {
+        {items.map((item) => {
           const qty = quantities[item.id] || 0;
           const isSelected = qty > 0;
 
@@ -82,9 +94,17 @@ export function Step3FnB({ quantities, onQuantityChange }: Step3FnBProps) {
             >
               <div>
                 <div className="flex items-start justify-between gap-3 mb-2">
-                  <div className="w-10 h-10 rounded-xl bg-[#181B2A] border border-[#2A2E45] flex items-center justify-center flex-shrink-0">
-                    {getIcon(item.iconName)}
-                  </div>
+                  {item.imageUrl ? (
+                    <img
+                      src={item.imageUrl}
+                      alt={item.name}
+                      className="h-24 w-24 flex-shrink-0 rounded-xl border border-[#2A2E45] object-cover"
+                    />
+                  ) : (
+                    <div className="h-24 w-24 rounded-xl bg-[#181B2A] border border-[#2A2E45] flex items-center justify-center flex-shrink-0">
+                      {getIcon(item.iconName)}
+                    </div>
+                  )}
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -99,6 +119,12 @@ export function Step3FnB({ quantities, onQuantityChange }: Step3FnBProps) {
                     </div>
                     <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">
                       {item.description}
+                    </p>
+                    <p className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-zinc-200">
+                      <Users className="h-3.5 w-3.5 text-purple-400" />
+                      Gợi ý: {item.recommendedMinPeople === item.recommendedMaxPeople
+                        ? `${item.recommendedMinPeople} người`
+                        : `${item.recommendedMinPeople}–${item.recommendedMaxPeople} người`}
                     </p>
                   </div>
                 </div>
@@ -131,8 +157,9 @@ export function Step3FnB({ quantities, onQuantityChange }: Step3FnBProps) {
                   </span>
                   <button
                     type="button"
+                    disabled={qty >= 10}
                     onClick={() => onQuantityChange(item.id, 1)}
-                    className="w-6 h-6 rounded-lg bg-gradient-to-r from-[#A855F7] to-[#EC4899] hover:opacity-90 flex items-center justify-center text-white transition-colors cursor-pointer"
+                    className="w-6 h-6 rounded-lg bg-gradient-to-r from-[#A855F7] to-[#EC4899] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 flex items-center justify-center text-white transition-colors cursor-pointer"
                   >
                     <Plus className="w-3 h-3" />
                   </button>
@@ -142,6 +169,7 @@ export function Step3FnB({ quantities, onQuantityChange }: Step3FnBProps) {
           );
         })}
       </div>
+      )}
 
       {/* Entertainment Upsell Card */}
       <div className="p-3.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 flex items-center justify-between gap-3">

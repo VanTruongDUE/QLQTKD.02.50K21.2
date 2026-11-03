@@ -13,8 +13,7 @@ import {
   Loader2,
   Mail,
 } from "lucide-react";
-import { Movie, Showtime, CinemaLocation, Seat } from "../types";
-import { FNB_ITEMS } from "../mock-data";
+import { Movie, Showtime, CinemaLocation, Seat, FnBItem } from "../types";
 import { useAuth } from "@/components/auth/auth-provider";
 
 interface Step4CheckoutProps {
@@ -25,6 +24,7 @@ interface Step4CheckoutProps {
   seats: Seat[];
   u22TicketCount: number;
   fnbQuantities: Record<string, number>;
+  fnbItems: FnBItem[];
   promoCode: string;
   promoDiscount: number;
   onApplyPromo: (code: string) => void;
@@ -41,6 +41,7 @@ export function Step4Checkout({
   seats,
   u22TicketCount,
   fnbQuantities,
+  fnbItems,
   promoDiscount,
   promoCode,
   onApplyPromo,
@@ -48,7 +49,7 @@ export function Step4Checkout({
   onTogglePoints,
   onPaymentSuccess,
 }: Step4CheckoutProps) {
-  const { profile } = useAuth();
+  const { profile, request } = useAuth();
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState("");
 
@@ -60,10 +61,14 @@ export function Step4Checkout({
 
   const [selectedMethod, setSelectedMethod] = useState<
     "vnpay" | "momo" | "wallet" | "card"
-  >("vnpay");
+  >("momo");
   const [inputCode, setInputCode] = useState(promoCode);
   const [isAgreedPolicy, setIsAgreedPolicy] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [paymentError, setPaymentError] = useState("");
+  // Keep the server-side hold and booking when payment setup fails, so retrying
+  // does not attempt to reserve the same seats a second time.
+  const [bookingId, setBookingId] = useState<string | null>(null);
 
   // Calculate real total
   const rawSeatTotal = selectedSeatIds.reduce((sum, id) => {
@@ -71,7 +76,7 @@ export function Step4Checkout({
     return sum + (s?.price || 60000);
   }, 0);
   const u22DiscountTotal = u22TicketCount * 25000;
-  const fnbTotal = FNB_ITEMS.reduce((sum, item) => {
+  const fnbTotal = fnbItems.reduce((sum, item) => {
     return sum + (fnbQuantities[item.id] || 0) * item.price;
   }, 0);
   const pointsDiscount = usePoints ? 25000 : 0;
@@ -88,50 +93,48 @@ export function Step4Checkout({
       return;
     }
     setEmailError("");
+    setPaymentError("");
+    if (!profile) {
+      setPaymentError("Vui lòng đăng nhập tài khoản khách hàng trước khi thanh toán.");
+      return;
+    }
     setIsProcessing(true);
-    let confirmedCode: string | undefined;
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api/v1";
+      const seatIds = selectedSeatIds.map((label) => seats.find((seat) => seat.id === label)?.serverId);
+      if (seatIds.some((id) => !id)) throw new Error("Sơ đồ ghế hiện tại chưa đồng bộ với máy chủ. Vui lòng tải lại suất chiếu.");
       const combos = Object.entries(fnbQuantities)
         .filter((entry) => entry[1] > 0)
         .map(([id, quantity]) => {
-          const item = FNB_ITEMS.find((f) => f.id === id);
+          const product = fnbItems.find((item) => item.id === id);
+          if (!product) throw new Error(`Sản phẩm ${id} chưa được cấu hình trên máy chủ.`);
           return {
-            name: item?.name || id,
+            productId: id,
             quantity,
-            unitPrice: item?.price || 0,
           };
         });
-
-      const res = await fetch(`${apiUrl}/checkout/confirm`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          recipientEmail: trimmedEmail,
-          customerName: profile?.display_name || "Khách hàng",
-          movieTitle: movie.title,
-          cinemaName: cinema?.name || "Starlight Cinema",
-          roomName: showtime?.room || "Phòng Chiếu",
-          startsAt: showtime?.startsAt || new Date().toISOString(),
-          seats: selectedSeatIds,
-          combos,
-          total: computedTotal,
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        if (data.bookingId) {
-          confirmedCode = data.bookingId;
-        }
+      let currentBookingId = bookingId;
+      if (!currentBookingId) {
+        const hold = await request<{ id: string }>("/holds", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ showtimeId: showtime.id, seatIds }) });
+        const booking = await request<{ id: string }>("/bookings", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ holdId: hold.id, recipientEmail: trimmedEmail.toLowerCase(), products: combos }) });
+        currentBookingId = booking.id;
+        setBookingId(booking.id);
       }
+      const payment = await request<{ checkoutUrl?: string; autoConfirmed?: boolean; bookingCode?: string }>(`/bookings/${currentBookingId}/payments`, { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() } });
+      if (payment.autoConfirmed) {
+        onPaymentSuccess(payment.bookingCode || currentBookingId);
+        return;
+      }
+      if (!payment.checkoutUrl) throw new Error("MoMo chưa trả về địa chỉ thanh toán.");
+      window.location.assign(payment.checkoutUrl);
+      return;
     } catch (err) {
-      console.error("Booking confirmation error:", err);
+      const message = err instanceof Error ? err.message : "Không thể tạo giao dịch MoMo.";
+      if (/hết hạn|expired/i.test(message)) {
+        setBookingId(null);
+      }
+      setPaymentError(message);
     } finally {
       setIsProcessing(false);
-      onPaymentSuccess(confirmedCode);
     }
   };
 
@@ -344,10 +347,12 @@ export function Step4Checkout({
           </p>
         ) : (
           <p className="text-[10px] text-zinc-400 mt-1">
-            Hệ thống n8n sẽ tự động gửi vé xem phim và mã QR về hòm thư này ngay sau khi bấm thanh toán.
+            Có thể nhập email khác với tài khoản đăng nhập. Xác nhận đặt vé sẽ được gửi đến hòm thư này sau khi thanh toán thành công.
           </p>
         )}
       </div>
+
+      {paymentError && <p role="alert" className="rounded-xl border border-rose-500/40 bg-rose-950/20 p-3 text-xs text-rose-300">{paymentError}</p>}
 
       {/* Policy Agreement Checkbox */}
       <div className="p-3.5 rounded-xl bg-[#131520] border border-[#222538] text-xs text-zinc-400">
