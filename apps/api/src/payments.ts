@@ -35,7 +35,10 @@ export class PaymentGateway {
   }
   assertConfigured(): void {
     if (this.name === "MOCK") {
-      if (process.env.NODE_ENV === "production")
+      if (
+        process.env.NODE_ENV === "production" &&
+        process.env.PUBLIC_DEMO_MODE !== "true"
+      )
         fail("PAYMENT_NOT_CONFIGURED", "Payment mock bị tắt trong production.", 503);
       return;
     }

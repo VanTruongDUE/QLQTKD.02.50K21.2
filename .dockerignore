@@ -4,6 +4,8 @@ node_modules
 **/dist
 .git
 .env
+.env.*
+!.env.example
 .taste-skill
 test-results
 playwright-report

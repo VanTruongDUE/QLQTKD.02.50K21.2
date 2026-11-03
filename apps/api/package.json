@@ -9,7 +9,9 @@
     "db:migrate": "ts-node src/database/migrate.ts",
     "seed:staff-demo": "ts-node src/database/seed-staff-demo.ts",
     "seed:catalog": "ts-node src/database/seed-catalog.ts",
+    "seed:public-demo": "ts-node src/database/seed-public-demo.ts",
     "bootstrap:manager": "ts-node src/database/bootstrap-manager.ts",
+    "bootstrap:public-demo-manager": "ts-node src/database/bootstrap-public-demo-manager.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"
