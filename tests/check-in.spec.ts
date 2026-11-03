@@ -1,21 +1,24 @@
 import {
   test,
   expect,
+  beforeEach,
   type Page,
   type BrowserContext,
-  request as apiRequest,
 } from "@playwright/test";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 const apiRequire = createRequire(resolve("apps/api/package.json"));
 type Fixture = {
   shows: { id: string; room: string }[];
   tickets: Record<string, { id: string; showtimeId: string }>;
+  gateEmail: string;
 };
 let fixture: Fixture;
 let password: string;
 let customerCookies: Awaited<ReturnType<BrowserContext["cookies"]>>;
+let staffCookies: Awaited<ReturnType<BrowserContext["cookies"]>>;
 let customerToken: string;
 test.beforeAll(async () => {
   const dotenv = apiRequire("dotenv");
@@ -28,9 +31,11 @@ test.beforeAll(async () => {
   process.env.DATABASE_URL = testDatabaseUrl;
   process.env.TEST_DATABASE_URL = testDatabaseUrl;
   process.env.NODE_ENV = "test";
+  process.env.JWT_SECRET = "starlight-test-jwt-secret-at-least-32-characters";
   process.env.QR_SECRET = "starlight-test-qr-secret-at-least-32-characters";
   password = process.env.DEMO_PASSWORD || "StarlightE2ETest2026!";
   process.env.DEMO_PASSWORD = password;
+  process.env.E2E_STAFF_EMAIL = `e2e-gate-${randomUUID()}@starlight.test`;
   const output = execFileSync(
     process.execPath,
     [
@@ -41,25 +46,39 @@ test.beforeAll(async () => {
     { cwd: resolve("apps/api"), encoding: "utf8", timeout: 45000 },
   );
   fixture = JSON.parse(output.slice(output.indexOf("{")));
-  const baseURL = process.env.E2E_BASE_URL || "http://127.0.0.1:3100";
-  const context = await apiRequest.newContext({ baseURL });
-  const response = await context.post("/api/v1/auth/login", {
-    headers: { Origin: new URL(baseURL).origin },
-    data: { email: "checkin@starlight.demo", password },
-  });
-  expect(response.ok()).toBeTruthy();
-  customerToken = (await response.json()).accessToken;
-  customerCookies = (await context.storageState()).cookies;
-  await context.dispose();
 });
-async function login(page: Page, email = "soatve@starlight.demo") {
+beforeEach(async () => {
+  process.env.E2E_ISSUE_SESSIONS = "true";
+  const output = execFileSync(
+    process.execPath,
+    [
+      "-r",
+      apiRequire.resolve("ts-node/register"),
+      "test/fixtures/seed-check-in.ts",
+    ],
+    { cwd: resolve("apps/api"), encoding: "utf8", timeout: 30000 },
+  );
+  const sessions = JSON.parse(output.slice(output.indexOf("{")));
+  customerToken = sessions.customer.accessToken;
+  const cookie = (value: string) => ({
+    name: "starlight_refresh",
+    value,
+    domain: new URL(process.env.E2E_BASE_URL || "http://127.0.0.1:3100").hostname,
+    path: "/api/v1/auth",
+    expires: Math.floor(Date.now() / 1000) + 7 * 86400,
+    httpOnly: true,
+    secure: false,
+    sameSite: "Strict" as const,
+  });
+  customerCookies = [cookie(sessions.customer.refreshToken)];
+  staffCookies = [cookie(sessions.staff.refreshToken)];
+});
+async function login(page: Page) {
+  await page.context().addCookies(staffCookies);
   await page.goto("/staff/check-in");
-  await page.locator(".staff-access-card button").click();
-  const dialog = page.getByRole("dialog");
-  await dialog.locator('input[type="email"]').fill(email);
-  await dialog.locator('input[type="password"]').fill(password);
-  await dialog.locator("form button").last().click();
-  await expect(dialog).not.toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Soát vé vào phòng chiếu" }),
+  ).toBeVisible();
 }
 async function selectShow(page: Page) {
   await page
@@ -96,7 +115,7 @@ test("manual ticket, explicit refusals, confirmation, history and duplicate reje
     page.getByRole("heading", { name: "Đã xác nhận vào phòng" }),
   ).toBeVisible();
   await expect(page.locator(".gate-history")).toContainText(
-    "soatve@starlight.demo",
+    fixture.gateEmail,
   );
   await manual.fill(fixture.tickets.valid.id);
   await page.getByRole("button", { name: "Kiểm tra mã vé" }).click();

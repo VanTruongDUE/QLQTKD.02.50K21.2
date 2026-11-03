@@ -33,8 +33,22 @@ export async function seedCheckIn(db = source) {
   const [owner] = await db.query(
     "SELECT id FROM users WHERE email='checkin@starlight.demo'",
   );
+  const e2eStaffEmail = process.env.E2E_STAFF_EMAIL;
+  if (e2eStaffEmail) {
+    const [e2eStaff] = await db.query(
+      `INSERT INTO users(email,password_hash,role) VALUES($1,$2,'STAFF')
+       ON CONFLICT(email) DO UPDATE SET password_hash=EXCLUDED.password_hash,role='STAFF',locked=false
+       RETURNING id`,
+      [e2eStaffEmail, hashPassword(required("DEMO_PASSWORD"))],
+    );
+    await db.query(
+      "INSERT INTO staff_cinema_assignments VALUES($1,$2) ON CONFLICT DO NOTHING",
+      [e2eStaff.id, cinema.id],
+    );
+  }
   const gates = await db.query(
-    "SELECT id,email FROM users WHERE email IN ('soatve@starlight.demo','soatve2@starlight.demo') AND role='STAFF' ORDER BY email",
+    "SELECT id,email FROM users WHERE (email IN ('soatve@starlight.demo','soatve2@starlight.demo') OR email=$1) AND role='STAFF' ORDER BY email",
+    [e2eStaffEmail || ""],
   );
   for (const gate of gates)
     await db.query(
@@ -154,6 +168,7 @@ export async function seedCheckIn(db = source) {
   }
   return {
     customerEmail: "checkin@starlight.demo",
+    gateEmail: e2eStaffEmail || "soatve@starlight.demo",
     gates,
     shows: shows.map(({ seatIds, ...show }) => {
       void seatIds;
@@ -162,12 +177,34 @@ export async function seedCheckIn(db = source) {
     tickets,
   };
 }
+export async function issueCheckInSessions(db = source) {
+  if (
+    process.env.NODE_ENV !== "test" ||
+    !new URL(
+      String(db.options.type === "postgres" ? db.options.url : ""),
+    ).pathname.endsWith("/starlight_test")
+  )
+    throw new Error("Check-in sessions are test-only");
+  const { AuthService } = await import("../../src/auth");
+  const { JwtService } = await import("@nestjs/jwt");
+  const auth = new AuthService(
+    db,
+    new JwtService({ secret: required("JWT_SECRET") }),
+  );
+  return {
+    customer: await auth.login("checkin@starlight.demo", required("DEMO_PASSWORD")),
+    staff: await auth.login(required("E2E_STAFF_EMAIL"), required("DEMO_PASSWORD")),
+  };
+}
 if (require.main === module)
   source
     .initialize()
     .then(async () => {
       try {
-        console.log(JSON.stringify(await seedCheckIn(), null, 2));
+        const result = process.env.E2E_ISSUE_SESSIONS === "true"
+          ? await issueCheckInSessions()
+          : await seedCheckIn();
+        console.log(JSON.stringify(result, null, 2));
       } finally {
         await source.destroy();
       }

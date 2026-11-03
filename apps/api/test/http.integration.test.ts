@@ -10,6 +10,8 @@ config({ path: "../../.env", quiet: true });
 const testUrl = process.env.TEST_DATABASE_URL!;
 if (!testUrl || !new URL(testUrl).pathname.endsWith("/starlight_test"))
   throw new Error("TEST_DATABASE_URL must point to starlight_test");
+if (new URL(testUrl).port !== "54329")
+  throw new Error("HTTP integration tests require isolated test PostgreSQL on port 54329");
 process.env.DATABASE_URL = testUrl;
 
 let app: import("@nestjs/common").INestApplication;

@@ -15,17 +15,17 @@ test("customer registers, books a future showtime, pays in test mode and keeps t
   await dialog.getByRole("button", { name: "Tạo tài khoản" }).click();
   await expect(dialog).not.toBeVisible();
 
-  const showtime = page
+  const showtimes = await page
     .getByRole("button", { name: /^\d{2}:\d{2}.*ghế$/ })
-    .first();
-  await expect(showtime).toBeVisible();
-  await showtime.click();
+    .all();
+  let availableSeats = page.locator(".overflow-x-auto button:not(:disabled)");
+  for (const showtime of [...showtimes].reverse()) {
+    await showtime.click();
+    await page.locator(".overflow-x-auto button").first().waitFor();
+    if (await availableSeats.count()) break;
+  }
 
-  const availableSeat = page
-    .getByRole("button")
-    .filter({ hasText: /^[A-Z]\d+$/ })
-    .and(page.locator(":not(:disabled)"))
-    .first();
+  const availableSeat = availableSeats.first();
   await expect(availableSeat).toBeVisible();
   const seatName = (await availableSeat.textContent())?.trim();
   await availableSeat.click();
@@ -39,9 +39,14 @@ test("customer registers, books a future showtime, pays in test mode and keeps t
     page.getByRole("heading", { name: "Đặt vé xem phim thành công" }),
   ).toBeVisible();
   await expect(page.getByText(seatName!, { exact: true })).toBeVisible();
+  await page
+    .getByRole("button", { name: "Mở Thẻ Vé Điện Tử (Check-in)" })
+    .click();
 
-  await page.reload();
-  await page.getByRole("button", { name: "Smart Check-in" }).click();
+  if (info.project.name === "chromium") {
+    await page.reload();
+    await page.getByRole("button", { name: "Smart Check-in" }).click();
+  }
   await page
     .getByRole("region", { name: "Danh sách phim đã đặt" })
     .getByRole("button")

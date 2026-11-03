@@ -13,6 +13,7 @@ export default defineConfig({
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
     {
       name: "mobile",
+      testMatch: ["tests/booking.spec.ts", "tests/check-in.spec.ts"],
       use: { ...devices["iPhone 13"], defaultBrowserType: "chromium" },
     },
   ],

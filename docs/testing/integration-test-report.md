@@ -1,6 +1,34 @@
 # Báo Cáo Kết Quả Kiểm Thử Tích Hợp (Integration Test Report)
 # STARLIGHT CINEMA – TP3 EVIDENCE
 
+## Cập nhật bộ kiểm thử tự động — 03/11/2026
+
+### Môi trường và lệnh đã chạy
+
+Các bài browser chạy trên stack riêng `compose.test.yaml`: PostgreSQL `starlight_test` trong tmpfs, API `127.0.0.1:4100`, web `127.0.0.1:3100`; không dùng hoặc reset database phát triển. Cấu hình test Compose đã qua `docker compose -f compose.test.yaml config --quiet`.
+
+| Lệnh | Kết quả thực tế |
+| --- | --- |
+| `pnpm test:coverage` | **80/80** qua, 7 file; statements/lines 75.08%, branches 75.76%, functions 75.00% |
+| `pnpm test:e2e` | **11/11** qua trong 53.1 giây: workflow đặt vé + QR, đăng nhập/role quản lý, check-in; Chromium desktop và mobile giả lập |
+| `pnpm typecheck` | Qua cho contracts, API và web |
+| `pnpm lint` | Exit 0; còn 2 cảnh báo unused parameter trong `step4-checkout.tsx` và `booking-wizard.tsx` |
+| `pnpm build` | Qua; Nest API và Next.js production build, có `/manager/accounts` và `/staff/check-in` |
+| `docker compose -f compose.test.yaml config --quiet` | Qua |
+
+E2E mới xác minh đăng ký khách, chọn suất tương lai, thanh toán test, QR còn sau reload, đăng nhập sai, trang dashboard quản lý, thao tác check-in bằng mã tay/QR, từ chối vé sai/trùng, camera bị từ chối và chặn khách truy cập màn nhân viên. Màn quản lý chỉ được E2E xác minh đăng nhập và mở dashboard; các phép tính dashboard được xác minh trong test API.
+
+### Kết quả / giới hạn
+
+- API coverage có 80 test qua, gồm kiểm tra tranh chấp ghế, giữ ghế hết hạn, idempotency thanh toán, phân quyền, đổi/hoàn, check-in đồng thời, dashboard và worker/outbox; chi tiết các ca hiện có vẫn ở bảng lịch sử phía trên và `docs/TEST_RESULTS.md`.
+- Thêm HTTP integration tests và browser E2E dùng tài khoản/fixture chỉ dành cho test. Helper phát hành session E2E chỉ chấp nhận database `starlight_test`; test stack dùng secret và payment mock riêng, không có đường callback giả trong runtime ứng dụng.
+- Chuyển sang màn Smart Check-in sau khi thanh toán giờ làm mới danh sách vé của khách; E2E kiểm tra QR còn sau tải lại trang.
+- Workflow GitHub Actions đã được bổ sung cho quality/API coverage và Playwright trên stack cô lập, nhưng chưa chạy trên GitHub từ phiên này.
+- Chưa kiểm chứng sandbox/cổng thanh toán thật, email Internet, tải cao/nhiều instance, Firefox/WebKit hoặc triển khai production. Mobile là Playwright Chromium giả lập. Đổi/hoàn được kiểm thử backend; chưa có E2E thao tác nghiệp vụ đổi/hoàn từ giao diện nhân viên trong bộ browser hiện tại.
+- Hai cảnh báo lint là tham số không dùng ở frontend và không phát sinh từ test harness; không sửa UI ngoài phạm vi.
+
+Để chạy lại browser suite: `pnpm test:e2e:up`, `pnpm test:e2e`, sau đó `pnpm test:e2e:down`. Các lệnh API/quality ở bảng trên chạy từ root repository.
+
 Ngày thực hiện: **02/11/2026**  
 Môi trường kiểm thử: **Node.js v24.14.0 + NestJS 11 + Vitest 3.2.7 + PostgreSQL 17 on Docker (Port 54329)**  
 Database kiểm thử: `starlight_test` (cơ sở dữ liệu biệt lập theo đúng tiêu chuẩn an toàn)

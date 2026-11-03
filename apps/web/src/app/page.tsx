@@ -11,7 +11,7 @@ import { CINEMA_LOCATIONS, MOVIES, SHOWTIMES } from "@/components/cinema/mock-da
 import { useAuth } from "@/components/auth/auth-provider";
 
 export default function CinemaApp() {
-  const { profile, request } = useAuth();
+  const { profile, request, refreshProfile } = useAuth();
   const [activeTab, setActiveTab] = useState<
     "booking" | "exchange_refund" | "checkin"
   >("booking");
@@ -129,6 +129,7 @@ export default function CinemaApp() {
   // Jump to checkin view
   const handleNavigateToCheckin = (_ticketCode: string) => {
     setActiveTab("checkin");
+    if (profile?.role === "CUSTOMER") void refreshProfile().catch(() => {});
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
