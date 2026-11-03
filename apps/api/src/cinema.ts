@@ -35,7 +35,13 @@ export class CatalogController {
     return this.db.query("SELECT id,name FROM cinemas WHERE provenance='OPERATIONAL' ORDER BY name");
   }
   @Get("products") products() {
-    return this.db.query("SELECT * FROM products WHERE active AND provenance='OPERATIONAL' ORDER BY price");
+    return this.db.query(
+      `SELECT id, name, description, category, price, original_price, image_url,
+        recommended_min_people, recommended_max_people, badge, icon_name, sort_order
+       FROM products
+       WHERE active AND provenance='OPERATIONAL'
+       ORDER BY sort_order, price, name`,
+    );
   }
   @Get("showtimes") showtimes() {
     return this.db.query(

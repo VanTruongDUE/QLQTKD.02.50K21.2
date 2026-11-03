@@ -67,6 +67,9 @@ export type FnBItem = {
   originalPrice?: number;
   category: "combo" | "snack" | "drink" | "entertainment";
   iconName: string;
+  imageUrl: string;
+  recommendedMinPeople: number;
+  recommendedMaxPeople: number;
   isPopular?: boolean;
   badge?: string;
 };

@@ -12,8 +12,8 @@ import {
   CheckCircle2,
   QrCode,
 } from "lucide-react";
-import { Movie, Showtime, CinemaLocation, Seat, Ticket } from "../types";
-import { MOVIES, SHOWTIMES, FNB_ITEMS, generateInitialSeats } from "../mock-data";
+import { Movie, Showtime, CinemaLocation, Seat, Ticket, FnBItem } from "../types";
+import { MOVIES, SHOWTIMES, generateInitialSeats } from "../mock-data";
 import { Step1Showtimes } from "./step1-showtimes";
 import { Step2SeatMap } from "./step2-seatmap";
 import { Step3FnB } from "./step3-fnb";
@@ -80,6 +80,39 @@ export function BookingWizard({
   const [promoDiscount, setPromoDiscount] = useState<number>(0);
   const [usePoints, setUsePoints] = useState<boolean>(false);
   const [createdTicketCode, setCreatedTicketCode] = useState<string>("");
+  const [fnbItems, setFnbItems] = useState<FnBItem[]>([]);
+  const [fnbLoading, setFnbLoading] = useState(true);
+  const [fnbError, setFnbError] = useState("");
+
+  useEffect(() => {
+    fetch("/api/v1/products")
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Không tải được danh mục sản phẩm đi kèm.");
+        return response.json() as Promise<Array<Record<string, unknown>>>;
+      })
+      .then((products) => {
+        setFnbItems(products.map((product) => ({
+          id: String(product.id),
+          name: String(product.name),
+          description: String(product.description || ""),
+          price: Number(product.price),
+          originalPrice: product.original_price == null ? undefined : Number(product.original_price),
+          category: product.category as FnBItem["category"],
+          iconName: String(product.icon_name || "Popcorn"),
+          imageUrl: String(product.image_url || ""),
+          recommendedMinPeople: Number(product.recommended_min_people || 1),
+          recommendedMaxPeople: Number(product.recommended_max_people || 1),
+          badge: product.badge ? String(product.badge) : undefined,
+          isPopular: String(product.badge || "").toLowerCase().includes("bán chạy"),
+        })));
+        setFnbError("");
+      })
+      .catch((error) => {
+        setFnbItems([]);
+        setFnbError(error instanceof Error ? error.message : "Không tải được danh mục sản phẩm đi kèm.");
+      })
+      .finally(() => setFnbLoading(false));
+  }, []);
 
   // Countdown Timer: 5 minutes (300s) hold time once seats are picked
   const [secondsRemaining, setSecondsRemaining] = useState<number>(300);
@@ -186,7 +219,7 @@ export function BookingWizard({
   const handleQuantityChange = (itemId: string, delta: number) => {
     setFnbQuantities((prev) => {
       const current = prev[itemId] || 0;
-      const next = Math.max(0, current + delta);
+      const next = Math.min(10, Math.max(0, current + delta));
       return { ...prev, [itemId]: next };
     });
   };
@@ -211,7 +244,7 @@ export function BookingWizard({
   const u22DiscountTotal = u22TicketCount * 25000;
   const seatSubtotal = Math.max(0, rawSeatTotal - u22DiscountTotal);
 
-  const fnbSubtotal = FNB_ITEMS.reduce((sum, item) => {
+  const fnbSubtotal = fnbItems.reduce((sum, item) => {
     return sum + (fnbQuantities[item.id] || 0) * item.price;
   }, 0);
 
@@ -323,6 +356,9 @@ export function BookingWizard({
 
             {currentStep === 3 && (
               <Step3FnB
+                items={fnbItems}
+                loading={fnbLoading}
+                error={fnbError}
                 quantities={fnbQuantities}
                 onQuantityChange={handleQuantityChange}
               />
@@ -338,6 +374,7 @@ export function BookingWizard({
                 seats={seats}
                 u22TicketCount={u22TicketCount}
                 fnbQuantities={fnbQuantities}
+                fnbItems={fnbItems}
                 promoCode={promoCode}
                 promoDiscount={promoDiscount}
                 onApplyPromo={handleApplyPromo}
@@ -470,7 +507,7 @@ export function BookingWizard({
                         </span>
                       </div>
                       <div className="text-[11px] text-zinc-500 pl-2 space-y-0.5">
-                        {FNB_ITEMS.filter((f) => (fnbQuantities[f.id] || 0) > 0).map(
+                        {fnbItems.filter((f) => (fnbQuantities[f.id] || 0) > 0).map(
                           (item) => (
                             <div key={item.id} className="truncate">
                               • {fnbQuantities[item.id]}x {item.name}

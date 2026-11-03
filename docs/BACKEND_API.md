@@ -51,7 +51,7 @@ C = CUSTOMER, S = STAFF, M = MANAGER. M **không** được check-in hoặc nh�
 | Method / path | Quyền | Input / kết quả chính |
 | --- | --- | --- |
 | GET /health | Public | `{ok:true}` khi DB kết nối được |
-| GET /cinemas, /movies, /products, /showtimes | Public | Danh mục OPERATIONAL, giữ tên field hiện có |
+| GET /cinemas, /movies, /products, /showtimes | Public | Danh mục OPERATIONAL; products có ảnh, mô tả, giá gốc, huy hiệu và khoảng số người gợi ý |
 | GET /showtimes/:id/seats | Public | `{serverTime,seats:[{id,label,status}]}`; status AVAILABLE/HELD/SOLD |
 | POST /auth/register | Public | `{email,password}`; tạo CUSTOMER; field role bị từ chối |
 | POST /auth/login | Public | `{email,password}` → accessToken, user, refresh cookie |

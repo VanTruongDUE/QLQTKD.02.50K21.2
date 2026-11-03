@@ -13,8 +13,7 @@ import {
   Loader2,
   Mail,
 } from "lucide-react";
-import { Movie, Showtime, CinemaLocation, Seat } from "../types";
-import { FNB_ITEMS } from "../mock-data";
+import { Movie, Showtime, CinemaLocation, Seat, FnBItem } from "../types";
 import { useAuth } from "@/components/auth/auth-provider";
 
 interface Step4CheckoutProps {
@@ -25,6 +24,7 @@ interface Step4CheckoutProps {
   seats: Seat[];
   u22TicketCount: number;
   fnbQuantities: Record<string, number>;
+  fnbItems: FnBItem[];
   promoCode: string;
   promoDiscount: number;
   onApplyPromo: (code: string) => void;
@@ -41,6 +41,7 @@ export function Step4Checkout({
   seats,
   u22TicketCount,
   fnbQuantities,
+  fnbItems,
   promoDiscount,
   promoCode,
   onApplyPromo,
@@ -75,7 +76,7 @@ export function Step4Checkout({
     return sum + (s?.price || 60000);
   }, 0);
   const u22DiscountTotal = u22TicketCount * 25000;
-  const fnbTotal = FNB_ITEMS.reduce((sum, item) => {
+  const fnbTotal = fnbItems.reduce((sum, item) => {
     return sum + (fnbQuantities[item.id] || 0) * item.price;
   }, 0);
   const pointsDiscount = usePoints ? 25000 : 0;
@@ -101,18 +102,13 @@ export function Step4Checkout({
     try {
       const seatIds = selectedSeatIds.map((label) => seats.find((seat) => seat.id === label)?.serverId);
       if (seatIds.some((id) => !id)) throw new Error("Sơ đồ ghế hiện tại chưa đồng bộ với máy chủ. Vui lòng tải lại suất chiếu.");
-      const products = await fetch("/api/v1/products").then(async (response) => {
-        if (!response.ok) throw new Error("Không tải được danh sách combo.");
-        return response.json() as Promise<Array<{ id: string; name: string }>>;
-      });
       const combos = Object.entries(fnbQuantities)
         .filter((entry) => entry[1] > 0)
         .map(([id, quantity]) => {
-          const item = FNB_ITEMS.find((f) => f.id === id);
-          const product = products.find((candidate) => candidate.name === item?.name);
-          if (!product) throw new Error(`Combo ${item?.name || id} chưa được cấu hình trên máy chủ.`);
+          const product = fnbItems.find((item) => item.id === id);
+          if (!product) throw new Error(`Sản phẩm ${id} chưa được cấu hình trên máy chủ.`);
           return {
-            productId: product.id,
+            productId: id,
             quantity,
           };
         });
