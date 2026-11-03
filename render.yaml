@@ -26,9 +26,8 @@ services:
     dockerContext: .
     dockerCommand: sh ./infra/start-render-demo.sh
     healthCheckPath: /api/v1/health
-    envVarGroups:
-      - starlight-demo-secrets
     envVars:
+      - fromGroup: starlight-demo-secrets
       - key: NODE_ENV
         value: production
       - key: PORT
