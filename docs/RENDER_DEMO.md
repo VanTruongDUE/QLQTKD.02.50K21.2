@@ -10,10 +10,9 @@ The Render Blueprint in `render.yaml` creates a temporary demo environment, not 
 
 ## Connect the services
 
-1. Create a Blueprint from this repository in Render and choose the Free plan for both resources.
-2. After Render supplies the API service URL, open the Vercel project's Environment Variables and set `API_INTERNAL_URL` to that HTTPS origin without a trailing slash, for example `https://starlight-api.onrender.com`.
-3. Set `NEXT_PUBLIC_API_URL` to `/api/v1` in Vercel so browser requests use the same-origin rewrite. Redeploy the Vercel project.
-4. Confirm `https://<render-api-host>/api/v1/health` returns `{"ok":true}` and the Vercel home page can load the seeded catalog.
+1. The `starlight-cinema-demo` Blueprint is connected to this repository on `main`; its API and PostgreSQL resources use the Free plan.
+2. The Vercel Production environment has `API_INTERNAL_URL` set to the Render API origin and `NEXT_PUBLIC_API_URL=/api/v1`, so browser requests use the same-origin rewrite.
+3. Pushes to `main` trigger the Production deployment. Confirm `https://starlight-api-0iy9.onrender.com/api/v1/health` returns `{"ok":true}` and the Vercel home page loads the seeded catalog.
 
 ## Optional manager account
 
