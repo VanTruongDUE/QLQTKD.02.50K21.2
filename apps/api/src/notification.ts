@@ -237,7 +237,9 @@ export class NotificationService {
     bookingId: string,
   ): Promise<{ recipientEmail: string; payload: StarlightEventPayload } | null> {
     const [b] = await m.query(
-      `SELECT b.*, u.email, u.display_name, u.phone
+      `SELECT b.*, u.email AS account_email,
+              COALESCE(b.delivery_email, u.email) AS recipient_email,
+              u.display_name, u.phone
        FROM bookings b
        JOIN users u ON u.id = b.owner_id
        WHERE b.id = $1`,
@@ -274,7 +276,7 @@ export class NotificationService {
       eventType: "booking.confirmed",
       schemaVersion: 1,
       occurredAt: new Date().toISOString(),
-      recipientEmail: b.email,
+      recipientEmail: b.recipient_email,
       booking: {
         id: b.id,
         total: b.total,
@@ -282,7 +284,7 @@ export class NotificationService {
       },
       customer: {
         id: b.owner_id,
-        email: b.email,
+        email: b.account_email,
         name: b.display_name || undefined,
         phone: b.phone || undefined,
       },
@@ -312,7 +314,7 @@ export class NotificationService {
       })),
     };
 
-    return { recipientEmail: b.email, payload };
+    return { recipientEmail: b.recipient_email, payload };
   }
 }
 

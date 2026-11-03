@@ -66,7 +66,7 @@ function StaffManagement({ request }: { request: <T>(path: string, init?: Reques
   const [cinemas, setCinemas] = useState<Cinema[]>([]);
   const [form, setForm] = useState({ email: "", password: "", cinemaId: "" });
   const [error, setError] = useState("");
-  const load = () => Promise.all([request<Staff[]>("/admin/staff"), fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api/v1"}/cinemas`).then((r) => r.json())]).then(([s, c]) => { setStaff(s); setCinemas(c); if (!form.cinemaId && c[0]) setForm((x) => ({ ...x, cinemaId: c[0].id })); });
+  const load = () => Promise.all([request<Staff[]>("/admin/staff"), fetch(`${process.env.NEXT_PUBLIC_API_URL || "/api/v1"}/cinemas`).then((r) => r.json())]).then(([s, c]) => { setStaff(s); setCinemas(c); if (!form.cinemaId && c[0]) setForm((x) => ({ ...x, cinemaId: c[0].id })); });
   useEffect(() => { load().catch((e) => setError(e.message)); }, []);
   const create = async (event: FormEvent) => {
     event.preventDefault(); setError("");

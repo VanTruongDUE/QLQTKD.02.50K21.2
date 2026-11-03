@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Query,
   Post,
   Param,
   Body,
@@ -28,8 +29,28 @@ export class CatalogController {
     await this.db.query("SELECT 1");
     return { ok: true };
   }
-  @Get("movies") movies() {
-    return this.db.query("SELECT * FROM movies WHERE active AND provenance='OPERATIONAL' ORDER BY title");
+  @Get("movies") movies(@Query("cinemaId") cinemaId?: string) {
+    const scopedCinemaId = cinemaId ? uuid(cinemaId) : null;
+    return this.db.query(
+      `SELECT m.* FROM movies m
+       WHERE m.active AND m.provenance='OPERATIONAL'
+         AND EXISTS (
+           SELECT 1 FROM showtimes s
+           JOIN auditoriums a ON a.id=s.auditorium_id
+           JOIN cinemas c ON c.id=a.cinema_id
+           WHERE s.movie_id=m.id
+             AND s.starts_at>clock_timestamp()
+             AND (s.starts_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= (clock_timestamp() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+             AND (s.starts_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date < (clock_timestamp() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 5
+             AND s.status='SCHEDULED'
+             AND s.provenance='OPERATIONAL'
+             AND a.active AND a.provenance='OPERATIONAL'
+             AND c.provenance='OPERATIONAL'
+             AND ($1::uuid IS NULL OR c.id=$1)
+         )
+       ORDER BY m.title`,
+      [scopedCinemaId],
+    );
   }
   @Get("cinemas") cinemas() {
     return this.db.query("SELECT id,name FROM cinemas WHERE provenance='OPERATIONAL' ORDER BY name");
@@ -43,9 +64,25 @@ export class CatalogController {
        ORDER BY sort_order, price, name`,
     );
   }
-  @Get("showtimes") showtimes() {
+  @Get("showtimes") showtimes(@Query("cinemaId") cinemaId?: string) {
+    const scopedCinemaId = cinemaId ? uuid(cinemaId) : null;
     return this.db.query(
-      `SELECT s.*, a.name AS room, c.name AS cinema, c.id AS cinema_id, m.title AS movie_title FROM showtimes s JOIN auditoriums a ON a.id=s.auditorium_id JOIN cinemas c ON c.id=a.cinema_id JOIN movies m ON m.id=s.movie_id WHERE s.starts_at>clock_timestamp() - interval '2 hours' AND s.status='SCHEDULED' AND s.provenance='OPERATIONAL' AND a.provenance='OPERATIONAL' AND c.provenance='OPERATIONAL' AND m.provenance='OPERATIONAL' ORDER BY s.starts_at`,
+      `SELECT s.*, a.name AS room, c.name AS cinema, c.id AS cinema_id, m.title AS movie_title
+       FROM showtimes s
+       JOIN auditoriums a ON a.id=s.auditorium_id
+       JOIN cinemas c ON c.id=a.cinema_id
+       JOIN movies m ON m.id=s.movie_id
+       WHERE s.starts_at>clock_timestamp()
+         AND (s.starts_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= (clock_timestamp() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+         AND (s.starts_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date < (clock_timestamp() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 5
+         AND s.status='SCHEDULED'
+         AND s.provenance='OPERATIONAL'
+         AND a.active AND a.provenance='OPERATIONAL'
+         AND c.provenance='OPERATIONAL'
+         AND m.active AND m.provenance='OPERATIONAL'
+         AND ($1::uuid IS NULL OR c.id=$1)
+       ORDER BY s.starts_at`,
+      [scopedCinemaId],
     );
   }
   @Get("showtimes/:id/seats") async seats(@Param("id") id: string) {

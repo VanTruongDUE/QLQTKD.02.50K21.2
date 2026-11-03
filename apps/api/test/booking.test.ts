@@ -208,6 +208,34 @@ describe("PostgreSQL transactions and invariants", () => {
     );
     expect(booking.status).toBe("CONFIRMED");
   });
+  it("stores the checkout recipient and sends booking notification to that email", async () => {
+    const recipientEmail = "nguoi.nhan.ve@gmail.com";
+    const h = (await service.hold(
+      owner,
+      { showtimeId: showId, seatIds: [seats[21]] },
+      key(),
+    )) as any;
+    const b = (await service.book(
+      owner,
+      { holdId: h.id, recipientEmail, products: [] },
+      key(),
+    )) as any;
+    const p = (await service.createPayment(owner, b.id, key())) as any;
+    await service.callback(event(p));
+
+    const [booking] = await db.query(
+      "SELECT delivery_email FROM bookings WHERE id=$1",
+      [b.id],
+    );
+    const [notification] = await db.query(
+      "SELECT recipient_email,payload FROM notification_outbox WHERE booking_id=$1",
+      [b.id],
+    );
+    expect(booking.delivery_email).toBe(recipientEmail);
+    expect(notification.recipient_email).toBe(recipientEmail);
+    expect(notification.payload.recipientEmail).toBe(recipientEmail);
+    expect(notification.payload.customer.email).toBe("khach@starlight.demo");
+  });
   it("AC04: failure issues no ticket, retry does not extend expiry", async () => {
     const { h, b, p } = await purchase([seats[7]]);
     await service.callback(event(p, "FAILED"));

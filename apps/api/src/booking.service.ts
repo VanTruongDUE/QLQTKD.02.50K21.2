@@ -99,6 +99,7 @@ export class BookingService {
     owner: string,
     input: {
       holdId: string;
+      recipientEmail?: string;
       products: { productId: string; quantity: number }[];
     },
     key?: string,
@@ -149,9 +150,15 @@ export class BookingService {
       }
       if (!Number.isSafeInteger(total) || total > 2147483647)
         fail("AMOUNT_OUT_OF_RANGE", "Tổng tiền vượt phạm vi xử lý.", 422);
+      const [account] = await m.query("SELECT email FROM users WHERE id=$1", [
+        owner,
+      ]);
+      const deliveryEmail = (input.recipientEmail || account.email)
+        .trim()
+        .toLowerCase();
       const [booking] = await m.query(
-        "INSERT INTO bookings(owner_id,hold_id,total) VALUES($1,$2,$3) RETURNING *",
-        [owner, hold.id, total],
+        "INSERT INTO bookings(owner_id,hold_id,total,delivery_email) VALUES($1,$2,$3,$4) RETURNING *",
+        [owner, hold.id, total, deliveryEmail],
       );
       for (const seat of seats) {
         const [label] = await m.query("SELECT label FROM seats WHERE id=$1", [
@@ -427,12 +434,13 @@ export class BookingService {
         [booking.owner_id],
       );
       if (ownerUser?.email) {
+        const recipientEmail = booking.delivery_email || ownerUser.email;
         const notifPayload = {
           eventId: randomBytes(16).toString("hex"),
           eventType: "booking.confirmed",
           schemaVersion: 1,
           occurredAt: clock.now.toISOString(),
-          recipientEmail: ownerUser.email,
+          recipientEmail,
           booking: { id: booking.id, total: booking.total, createdAt: booking.created_at },
           customer: { id: booking.owner_id, email: ownerUser.email, name: ownerUser.display_name },
           movie: { id: show.movie_id, title: show.title },
@@ -442,7 +450,7 @@ export class BookingService {
         await m.query(
           `INSERT INTO notification_outbox(event_id, event_type, booking_id, recipient_email, payload)
            VALUES($1, 'booking.confirmed', $2, $3, $4) ON CONFLICT(event_id) DO NOTHING`,
-          [notifPayload.eventId, booking.id, ownerUser.email, JSON.stringify(notifPayload)],
+          [notifPayload.eventId, booking.id, recipientEmail, JSON.stringify(notifPayload)],
         );
       }
       await m.query(

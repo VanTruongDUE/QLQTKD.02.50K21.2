@@ -1,0 +1,45 @@
+name: starlight-test
+services:
+  postgres-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: starlight
+      POSTGRES_PASSWORD: starlight_test
+      POSTGRES_DB: starlight_test
+    ports: ["127.0.0.1:54330:5432"]
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U starlight -d starlight_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  api-test:
+    build: { context: ., dockerfile: infra/Dockerfile }
+    environment:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://starlight:starlight_test@postgres-test:5432/starlight_test
+      TEST_DATABASE_URL: postgresql://starlight:starlight_test@postgres-test:5432/starlight_test
+      JWT_SECRET: starlight-test-jwt-secret-at-least-32-characters
+      QR_SECRET: starlight-test-qr-secret-at-least-32-characters
+      WEB_ORIGIN: http://127.0.0.1:3100
+      PAYMENT_MODE: mock
+      DEMO_PASSWORD: StarlightE2ETest2026!
+      SMTP_FROM: Starlight Test <tickets@starlight.test>
+    command:
+      - sh
+      - -c
+      - pnpm db:migrate && pnpm --filter @starlight/api exec ts-node test/fixtures/seed.ts && pnpm --filter @starlight/api start
+    ports: ["127.0.0.1:4100:4000"]
+    depends_on:
+      postgres-test: { condition: service_healthy }
+  web-test:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile
+      args:
+        API_INTERNAL_URL: http://api-test:4000
+    environment:
+      API_INTERNAL_URL: http://api-test:4000
+    command: ["pnpm", "--filter", "@starlight/web", "start"]
+    ports: ["127.0.0.1:3100:3000"]
+    depends_on: [api-test]

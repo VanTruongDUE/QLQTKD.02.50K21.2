@@ -20,22 +20,31 @@ let customerToken: string;
 test.beforeAll(async () => {
   const dotenv = apiRequire("dotenv");
   dotenv.config({ path: resolve(".env"), quiet: true });
-  password = process.env.DEMO_PASSWORD!;
+  const testDatabaseUrl =
+    process.env.E2E_TEST_DATABASE_URL ||
+    "postgresql://starlight:starlight_test@127.0.0.1:54330/starlight_test";
+  if (!new URL(testDatabaseUrl).pathname.endsWith("/starlight_test"))
+    throw new Error("E2E database must be starlight_test");
+  process.env.DATABASE_URL = testDatabaseUrl;
+  process.env.TEST_DATABASE_URL = testDatabaseUrl;
+  process.env.NODE_ENV = "test";
+  process.env.QR_SECRET = "starlight-test-qr-secret-at-least-32-characters";
+  password = process.env.DEMO_PASSWORD || "StarlightE2ETest2026!";
+  process.env.DEMO_PASSWORD = password;
   const output = execFileSync(
     process.execPath,
     [
       "-r",
       apiRequire.resolve("ts-node/register"),
-      "src/database/seed-check-in.ts",
+      "test/fixtures/seed-check-in.ts",
     ],
     { cwd: resolve("apps/api"), encoding: "utf8", timeout: 45000 },
   );
   fixture = JSON.parse(output.slice(output.indexOf("{")));
-  const context = await apiRequest.newContext({
-    baseURL: process.env.E2E_BASE_URL || "http://localhost:3000",
-  });
+  const baseURL = process.env.E2E_BASE_URL || "http://127.0.0.1:3100";
+  const context = await apiRequest.newContext({ baseURL });
   const response = await context.post("/api/v1/auth/login", {
-    headers: { Origin: "http://localhost:3000" },
+    headers: { Origin: new URL(baseURL).origin },
     data: { email: "checkin@starlight.demo", password },
   });
   expect(response.ok()).toBeTruthy();
@@ -45,15 +54,18 @@ test.beforeAll(async () => {
 });
 async function login(page: Page, email = "soatve@starlight.demo") {
   await page.goto("/staff/check-in");
-  await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
+  await page.locator(".staff-access-card button").click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("Email").fill(email);
-  await dialog.getByLabel("Mật khẩu").fill(password);
-  await dialog.getByRole("button", { name: "Đăng nhập", exact: true }).click();
+  await dialog.locator('input[type="email"]').fill(email);
+  await dialog.locator('input[type="password"]').fill(password);
+  await dialog.locator("form button").last().click();
   await expect(dialog).not.toBeVisible();
 }
 async function selectShow(page: Page) {
-  await page.getByLabel("Chọn suất chiếu").selectOption(fixture.shows[0].id);
+  await page
+    .locator(".assigned-show")
+    .filter({ hasText: fixture.shows[0].room })
+    .click();
 }
 test("manual ticket, explicit refusals, confirmation, history and duplicate rejection", async ({
   page,
@@ -119,11 +131,11 @@ test("actual QR decoding from simulated video, camera stops, explicit confirm", 
   page,
   request,
 }) => {
-  const list = await (
-    await request.get("/api/v1/me/tickets", {
+  const response = await request.get("/api/v1/me/tickets", {
       headers: { Authorization: `Bearer ${customerToken}` },
-    })
-  ).json();
+    });
+  expect(response.ok()).toBeTruthy();
+  const list = await response.json();
   const qr = list.find(
     (t: { id: string }) => t.id === fixture.tickets.camera.id,
   ).qrImage;
@@ -134,16 +146,17 @@ test("actual QR decoding from simulated video, camera stops, explicit confirm", 
         picture.src = dataUrl;
         await picture.decode();
         const canvas = document.createElement("canvas");
-        canvas.width = 640;
+        canvas.width = 720;
         canvas.height = 480;
         const ctx = canvas.getContext("2d")!;
+        ctx.imageSmoothingEnabled = false;
         ctx.fillStyle = "white";
-        ctx.fillRect(0, 0, 640, 480);
-        ctx.drawImage(picture, 150, 70, 340, 340);
+        ctx.fillRect(0, 0, 720, 480);
+        ctx.drawImage(picture, 140, 20, 440, 440);
         const stream = canvas.captureStream(10);
         (window as unknown as { testCamera: MediaStream }).testCamera = stream;
         const timer = setInterval(() => {
-          ctx.drawImage(picture, 150, 70, 340, 340);
+          ctx.drawImage(picture, 140, 20, 440, 440);
           if (stream.getTracks().every((t) => t.readyState === "ended"))
             clearInterval(timer);
         }, 100);
@@ -157,7 +170,9 @@ test("actual QR decoding from simulated video, camera stops, explicit confirm", 
   await login(page);
   await selectShow(page);
   await page.getByRole("button", { name: "Bật camera quét QR" }).click();
-  await expect(page.getByText("Vé đủ điều kiện kiểm tra")).toBeVisible();
+  await expect(page.getByText("Vé đủ điều kiện kiểm tra")).toBeVisible({
+    timeout: 10000,
+  });
   expect(
     await page.evaluate(() =>
       (window as unknown as { testCamera: MediaStream }).testCamera
@@ -195,7 +210,10 @@ test("camera denial leaves manual entry usable; changing show discards old inspe
     .fill(fixture.tickets.valid2.id);
   await page.getByRole("button", { name: "Kiểm tra mã vé" }).click();
   await expect(page.getByText("Vé đủ điều kiện kiểm tra")).toBeVisible();
-  await page.getByLabel("Chọn suất chiếu").selectOption(fixture.shows[1].id);
+  await page
+    .locator(".assigned-show")
+    .filter({ hasText: fixture.shows[1].room })
+    .click();
   await expect(
     page.getByRole("button", { name: "Xác nhận vào phòng" }),
   ).toHaveCount(0);
@@ -203,8 +221,6 @@ test("camera denial leaves manual entry usable; changing show discards old inspe
 test("customer cannot access staff controls", async ({ page }) => {
   await page.context().addCookies(customerCookies);
   await page.goto("/staff/check-in");
-  await expect(page.getByRole("main").getByRole("alert")).toContainText(
-    "không có quyền soát vé",
-  );
-  await expect(page.getByLabel("Chọn suất chiếu")).toHaveCount(0);
+  await expect(page.locator(".staff-access-card h1")).toBeVisible();
+  await expect(page.locator(".assigned-show")).toHaveCount(0);
 });

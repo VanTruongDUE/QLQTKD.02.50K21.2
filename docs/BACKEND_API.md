@@ -60,7 +60,7 @@ C = CUSTOMER, S = STAFF, M = MANAGER. M **không** được check-in hoặc nh�
 | GET/PATCH /me/profile | C/S/M | PATCH `{displayName,phone}`, không nhận role/email/locked |
 | POST /me/password | C/S/M | `{currentPassword,newPassword}`; phải đăng nhập lại |
 | POST /holds **K** | C | `{showtimeId,seatIds}`; 1–8 ghế không trùng; expiresAt/serverTime |
-| POST /bookings **K** | C | `{holdId,products:[{productId,quantity}]}`; backend snapshot giá |
+| POST /bookings **K** | C | `{holdId,recipientEmail,products:[{productId,quantity}]}`; backend snapshot giá và email nhận vé |
 | POST /bookings/:id/payments **K** | C, chủ đơn | Tạo checkout MoMo qua adapter; 503 khi thiếu cấu hình, 404 nếu không đúng chủ |
 | GET /me/bookings, /me/tickets | C | Đơn/vé chính mình; QR chỉ được cấp cho chủ vé |
 | GET /bookings/:id | C chủ đơn / S,M cùng rạp | Đơn + items/products/payments, gồm checkout_url/status |
@@ -143,6 +143,10 @@ Còn cần người vận hành cung cấp `MOMO_PARTNER_CODE`, `MOMO_ACCESS_KEY
 Query đã có đường xử lý PENDING/UNKNOWN theo bằng chứng terminal. Còn cần adapter/job đối soát tự động, chính sách retry của từng cổng và xử lý hỗ trợ khi provider trả kết quả mâu thuẫn. Khoản hoàn FAILED sau khi đổi đã cam kết hoặc hoàn một phần được giữ trong hàng đối soát; chưa có thao tác tự động gửi một khoản hoàn mới cho trường hợp này. Không sửa tay trạng thái SUCCEEDED hay mở khóa vé để bỏ qua công nợ.
 
 SMTP dùng Nodemailer sẵn có, bổ sung SMTP_FROM, SMTP_USER/PASSWORD, SMTP_PORT, SMTP_SECURE; production yêu cầu TLS. Thiếu SMTP_HOST hoặc SMTP_FROM thì outbox vẫn chờ, không đánh SENT giả. Mailpit là hộp thư test local, không chứng minh email Internet. Cấu hình `.env` cũ được giữ nguyên; nếu dùng Mailpit để kiểm thử local, SMTP_PORT=1025, SMTP_HOST=127.0.0.1 (hoặc mailpit khi trong Docker) và SMTP_FROM do người vận hành cấu hình. Không gửi email cho đơn LEGACY_DEMO.
+
+`recipientEmail` là địa chỉ nhận thông báo của riêng đơn hàng và được lưu tại `bookings.delivery_email`. Nó có thể khác email tài khoản nhưng không thay đổi chủ sở hữu vé, quyền xem QR, đổi/trả hoặc hoàn tiền. Nếu client gửi lại cùng khóa idempotency với email khác, backend từ chối do payload không khớp.
+
+`GET /movies` và `GET /showtimes` nhận tùy chọn `cinemaId`. Danh mục công khai chỉ trả phim hoạt động và suất `SCHEDULED` chưa bắt đầu, từ ngày hiện tại đến hết 4 ngày kế tiếp theo múi giờ `Asia/Ho_Chi_Minh`. Phim không còn suất hợp lệ trong khoảng này không xuất hiện.
 
 ## Frontend được giữ nguyên, chưa nối đầy đủ
 

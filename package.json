@@ -8,7 +8,10 @@
     "typecheck": "pnpm -r typecheck",
     "db:migrate": "pnpm --filter @starlight/api db:migrate",
     "test": "pnpm --filter @starlight/api test",
+    "test:coverage": "pnpm --filter @starlight/api test:coverage",
     "test:e2e": "playwright test",
+    "test:e2e:up": "docker compose -f compose.test.yaml up -d --build",
+    "test:e2e:down": "docker compose -f compose.test.yaml down",
     "lint": "oxlint apps packages",
     "format": "prettier --write apps packages *.json *.yaml docs README.md"
   },

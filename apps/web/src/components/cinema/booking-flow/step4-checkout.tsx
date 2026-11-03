@@ -115,7 +115,7 @@ export function Step4Checkout({
       let currentBookingId = bookingId;
       if (!currentBookingId) {
         const hold = await request<{ id: string }>("/holds", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ showtimeId: showtime.id, seatIds }) });
-        const booking = await request<{ id: string }>("/bookings", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ holdId: hold.id, products: combos }) });
+        const booking = await request<{ id: string }>("/bookings", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ holdId: hold.id, recipientEmail: trimmedEmail.toLowerCase(), products: combos }) });
         currentBookingId = booking.id;
         setBookingId(booking.id);
       }
@@ -347,7 +347,7 @@ export function Step4Checkout({
           </p>
         ) : (
           <p className="text-[10px] text-zinc-400 mt-1">
-            Hệ thống n8n sẽ tự động gửi vé xem phim và mã QR về hòm thư này ngay sau khi bấm thanh toán.
+            Có thể nhập email khác với tài khoản đăng nhập. Xác nhận đặt vé sẽ được gửi đến hòm thư này sau khi thanh toán thành công.
           </p>
         )}
       </div>

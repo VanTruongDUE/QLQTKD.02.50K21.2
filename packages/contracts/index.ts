@@ -15,6 +15,7 @@ export const holdSchema = z.object({
 });
 export const bookingSchema = z.object({
   holdId: z.uuid(),
+  recipientEmail: z.email().max(200).transform((value) => value.trim().toLowerCase()),
   products: z
     .array(
       z.object({
