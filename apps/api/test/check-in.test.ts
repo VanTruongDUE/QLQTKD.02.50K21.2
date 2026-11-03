@@ -58,11 +58,11 @@ beforeAll(async () => {
   app = await bootstrap(0);
   base = (await app.getUrl()).replace("0.0.0.0", "127.0.0.1") + "/api/v1";
   for (const [role, email] of Object.entries({
-    gate: "soatve@starlight.demo",
-    gate2: "soatve2@starlight.demo",
-    customer: "checkin@starlight.demo",
-    counter: "quay@starlight.demo",
-    manager: "quanly@starlight.demo",
+    gate: fixture.gateEmail,
+    gate2: fixture.gate2Email,
+    customer: fixture.customerEmail,
+    counter: fixture.counterEmail,
+    manager: fixture.managerEmail,
   })) {
     const response = await http(
       "/auth/login",
@@ -262,7 +262,7 @@ describe("Check-in rules and atomic commit", () => {
       history.find((h: { id: string }) => h.id === result.id),
     ).toMatchObject({
       staffId: result.staffId,
-      staffEmail: "soatve@starlight.demo",
+      staffEmail: fixture.gateEmail,
     });
   });
   it.each(["none", "customer", "manager"])(
@@ -299,7 +299,9 @@ describe("Check-in rules and atomic commit", () => {
     const response = await http("/check-in/showtimes");
     expect(response.status).toBe(200);
     const shows = await response.json();
-    const assignedShow = shows.find((show: { id: string }) => show.id === fixture.shows[0].id);
+    const assignedShow = shows.find(
+      (show: { id: string }) => show.id === fixture.shows[0].id,
+    );
     expect(assignedShow).toMatchObject({
       title: expect.any(String),
       description: expect.any(String),

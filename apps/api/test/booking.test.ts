@@ -3,6 +3,7 @@ import { beforeAll, afterAll, describe, it, expect } from "vitest";
 import { randomUUID, createHmac } from "node:crypto";
 import { DataSource } from "typeorm";
 import { config } from "dotenv";
+import { hashPassword } from "../src/security";
 config({ path: "../../.env", quiet: true });
 // Only the dedicated test database is eligible. Never reset the user's database.
 const testUrl = process.env.TEST_DATABASE_URL!;
@@ -15,6 +16,10 @@ let app: import("@nestjs/common").INestApplication;
 let base: string;
 let owner: string;
 let other: string;
+let ownerEmail: string;
+let otherEmail: string;
+let gateEmail: string;
+let counterEmail: string;
 let customerToken: string;
 let gateToken: string;
 let counterToken: string;
@@ -67,18 +72,51 @@ beforeAll(async () => {
   db = new DataSource({ ...databaseOptions, url: testUrl });
   await db.initialize();
   await db.runMigrations();
-  const { seed } = await import("./fixtures/seed");
-  await seed(db);
   const { BookingService } = await import("../src/booking.service");
   service = new BookingService(db, new TestGateway());
-  const users = await db.query("SELECT id,email FROM users");
-  owner = users.find((u: any) => u.email === "khach@starlight.demo").id;
-  other = users.find((u: any) => u.email === "khach2@starlight.demo").id;
-  // Each run adds an isolated auditorium/showtime; prior evidence remains intact.
-  const [cinema] = (await db.query(
-    "SELECT c.id FROM cinemas c JOIN staff_cinema_assignments sa ON sa.cinema_id=c.id JOIN users u ON u.id=sa.user_id WHERE u.email='soatve@starlight.demo' LIMIT 1",
-  )) || (await db.query("SELECT id FROM cinemas LIMIT 1"));
-  const [movie] = await db.query("SELECT id FROM movies LIMIT 1");
+  const suffix = key();
+  ownerEmail = `booking-customer-${suffix}@test.local`;
+  otherEmail = `booking-other-${suffix}@test.local`;
+  gateEmail = `booking-gate-${suffix}@test.local`;
+  counterEmail = `booking-counter-${suffix}@test.local`;
+  const passwordHash = hashPassword(process.env.DEMO_PASSWORD!);
+  for (const [email, role] of [
+    [ownerEmail, "CUSTOMER"],
+    [otherEmail, "CUSTOMER"],
+    [gateEmail, "STAFF"],
+    [counterEmail, "STAFF"],
+  ]) {
+    await db.query(
+      "INSERT INTO users(email,password_hash,role) VALUES($1,$2,$3)",
+      [email, passwordHash, role],
+    );
+  }
+  const [ownerRow] = await db.query("SELECT id FROM users WHERE email=$1", [
+    ownerEmail,
+  ]);
+  const [otherRow] = await db.query("SELECT id FROM users WHERE email=$1", [
+    otherEmail,
+  ]);
+  owner = ownerRow.id;
+  other = otherRow.id;
+  const [cinema] = await db.query(
+    "INSERT INTO cinemas(name) VALUES($1) RETURNING id",
+    [`Booking test ${suffix}`],
+  );
+  await db.query(
+    "INSERT INTO staff_cinema_assignments(user_id,cinema_id) VALUES($1,$2),($3,$2)",
+    [
+      (await db.query("SELECT id FROM users WHERE email=$1", [gateEmail]))[0]
+        .id,
+      cinema.id,
+      (await db.query("SELECT id FROM users WHERE email=$1", [counterEmail]))[0]
+        .id,
+    ],
+  );
+  const [movie] = await db.query(
+    "INSERT INTO movies(title,description,duration_minutes,rating,poster,cinema_id) VALUES($1,'test fixture',180,'P','', $2) RETURNING id",
+    [`Booking test film ${suffix}`, cinema.id],
+  );
   const [room] = await db.query(
     "INSERT INTO auditoriums(cinema_id,name) VALUES($1,$2) RETURNING id",
     [cinema.id, `Test ${key()}`],
@@ -103,10 +141,10 @@ beforeAll(async () => {
   const { bootstrap } = await import("../src/main");
   app = await bootstrap(0);
   base = (await app.getUrl()).replace("0.0.0.0", "127.0.0.1") + "/api/v1";
-  for (const email of [
-    "khach@starlight.demo",
-    "soatve@starlight.demo",
-    "quay@starlight.demo",
+  for (const [email, role] of [
+    [ownerEmail, "customer"],
+    [gateEmail, "gate"],
+    [counterEmail, "counter"],
   ]) {
     const response = await http("/auth/login", {
       email,
@@ -114,8 +152,8 @@ beforeAll(async () => {
     });
     expect(response.status).toBe(201);
     const data = await response.json();
-    if (email.startsWith("khach")) customerToken = data.accessToken;
-    else if (email.startsWith("soatve")) gateToken = data.accessToken;
+    if (role === "customer") customerToken = data.accessToken;
+    else if (role === "gate") gateToken = data.accessToken;
     else counterToken = data.accessToken;
   }
 });
@@ -234,7 +272,7 @@ describe("PostgreSQL transactions and invariants", () => {
     expect(booking.delivery_email).toBe(recipientEmail);
     expect(notification.recipient_email).toBe(recipientEmail);
     expect(notification.payload.recipientEmail).toBe(recipientEmail);
-    expect(notification.payload.customer.email).toBe("khach@starlight.demo");
+    expect(notification.payload.customer.email).toBe(ownerEmail);
   });
   it("AC04: failure issues no ticket, retry does not extend expiry", async () => {
     const { h, b, p } = await purchase([seats[7]]);
@@ -499,7 +537,7 @@ describe("HTTP security and check-in", () => {
   });
   it("refresh rotates cookie, rejects old token and logout revokes access", async () => {
     const login = await http("/auth/login", {
-      email: "khach2@starlight.demo",
+      email: otherEmail,
       password: process.env.DEMO_PASSWORD,
     });
     const cookie = login.headers.get("set-cookie")!.split(";")[0];

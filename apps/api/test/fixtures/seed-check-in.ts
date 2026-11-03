@@ -1,7 +1,6 @@
 import { TestGateway } from "../gateway";
 import { randomUUID } from "node:crypto";
 import { source } from "../../src/database/source";
-import { seed } from "./seed";
 import { hashPassword } from "../../src/security";
 import { required } from "../../src/config";
 import { BookingService } from "../../src/booking.service";
@@ -14,48 +13,51 @@ export async function seedCheckIn(db = source) {
     ).pathname.endsWith("/starlight_test")
   )
     throw new Error("Check-in demo is development/test only");
-  await seed(db);
+  const suffix = randomUUID();
   const [cinema] = await db.query(
-    "SELECT id FROM cinemas WHERE name='Starlight Đà Nẵng • Demo'",
+    "INSERT INTO cinemas(name) VALUES($1) RETURNING id",
+    [`Check-in test ${suffix}`],
   );
   const [movie] = await db.query(
-    "SELECT id FROM movies ORDER BY title LIMIT 1",
+    "INSERT INTO movies(title,description,duration_minutes,rating,poster,cinema_id) VALUES($1,'test fixture',120,'P','',$2) RETURNING id",
+    [`Check-in test film ${suffix}`, cinema.id],
   );
+  const customerEmail =
+    process.env.E2E_CUSTOMER_EMAIL || `checkin-customer-${suffix}@test.local`;
+  const gateEmail =
+    process.env.E2E_STAFF_EMAIL || `checkin-gate-${suffix}@test.local`;
+  const gate2Email = `checkin-gate2-${suffix}@test.local`;
+  const counterEmail = `checkin-counter-${suffix}@test.local`;
+  const managerEmail = `checkin-manager-${suffix}@test.local`;
+  const passwordHash = hashPassword(required("DEMO_PASSWORD"));
+  const accounts = new Map<string, { id: string; role: string }>();
   for (const [email, role] of [
-    ["checkin@starlight.demo", "CUSTOMER"],
-    ["soatve2@starlight.demo", "STAFF"],
+    [customerEmail, "CUSTOMER"],
+    [gateEmail, "STAFF"],
+    [gate2Email, "STAFF"],
+    [counterEmail, "STAFF"],
+    [managerEmail, "MANAGER"],
   ]) {
-    await db.query(
-      "INSERT INTO users(email,password_hash,role) VALUES($1,$2,$3) ON CONFLICT(email) DO NOTHING",
-      [email, hashPassword(required("DEMO_PASSWORD")), role],
+    const [account] = await db.query(
+      `INSERT INTO users(email,password_hash,role) VALUES($1,$2,$3)
+       ON CONFLICT(email) DO UPDATE SET password_hash=EXCLUDED.password_hash,role=EXCLUDED.role,locked=false
+       RETURNING id,role`,
+      [email, passwordHash, role],
     );
+    accounts.set(email, account);
+    if (role === "STAFF")
+      await db.query(
+        "INSERT INTO staff_cinema_assignments(user_id,cinema_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+        [account.id, cinema.id],
+      );
   }
-  const [owner] = await db.query(
-    "SELECT id FROM users WHERE email='checkin@starlight.demo'",
+  const owner = accounts.get(customerEmail)!;
+  const gates = [accounts.get(gateEmail)!, accounts.get(gate2Email)!].map(
+    (account, index) => ({
+      ...account,
+      email: index === 0 ? gateEmail : gate2Email,
+    }),
   );
-  const e2eStaffEmail = process.env.E2E_STAFF_EMAIL;
-  if (e2eStaffEmail) {
-    const [e2eStaff] = await db.query(
-      `INSERT INTO users(email,password_hash,role) VALUES($1,$2,'STAFF')
-       ON CONFLICT(email) DO UPDATE SET password_hash=EXCLUDED.password_hash,role='STAFF',locked=false
-       RETURNING id`,
-      [e2eStaffEmail, hashPassword(required("DEMO_PASSWORD"))],
-    );
-    await db.query(
-      "INSERT INTO staff_cinema_assignments VALUES($1,$2) ON CONFLICT DO NOTHING",
-      [e2eStaff.id, cinema.id],
-    );
-  }
-  const gates = await db.query(
-    "SELECT id,email FROM users WHERE (email IN ('soatve@starlight.demo','soatve2@starlight.demo') OR email=$1) AND role='STAFF' ORDER BY email",
-    [e2eStaffEmail || ""],
-  );
-  for (const gate of gates)
-    await db.query(
-      "INSERT INTO staff_cinema_assignments VALUES($1,$2) ON CONFLICT DO NOTHING",
-      [gate.id, cinema.id],
-    );
-  const suffix = randomUUID().slice(0, 8);
   const shows: {
     id: string;
     starts_at: Date;
@@ -167,8 +169,11 @@ export async function seedCheckIn(db = source) {
     };
   }
   return {
-    customerEmail: "checkin@starlight.demo",
-    gateEmail: e2eStaffEmail || "soatve@starlight.demo",
+    customerEmail,
+    gateEmail,
+    gate2Email,
+    counterEmail,
+    managerEmail,
     gates,
     shows: shows.map(({ seatIds, ...show }) => {
       void seatIds;
@@ -192,8 +197,14 @@ export async function issueCheckInSessions(db = source) {
     new JwtService({ secret: required("JWT_SECRET") }),
   );
   return {
-    customer: await auth.login("checkin@starlight.demo", required("DEMO_PASSWORD")),
-    staff: await auth.login(required("E2E_STAFF_EMAIL"), required("DEMO_PASSWORD")),
+    customer: await auth.login(
+      required("E2E_CUSTOMER_EMAIL"),
+      required("DEMO_PASSWORD"),
+    ),
+    staff: await auth.login(
+      required("E2E_STAFF_EMAIL"),
+      required("DEMO_PASSWORD"),
+    ),
   };
 }
 if (require.main === module)
@@ -201,9 +212,10 @@ if (require.main === module)
     .initialize()
     .then(async () => {
       try {
-        const result = process.env.E2E_ISSUE_SESSIONS === "true"
-          ? await issueCheckInSessions()
-          : await seedCheckIn();
+        const result =
+          process.env.E2E_ISSUE_SESSIONS === "true"
+            ? await issueCheckInSessions()
+            : await seedCheckIn();
         console.log(JSON.stringify(result, null, 2));
       } finally {
         await source.destroy();

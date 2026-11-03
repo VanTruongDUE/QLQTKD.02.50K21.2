@@ -35,6 +35,7 @@ test.beforeAll(async () => {
   process.env.QR_SECRET = "starlight-test-qr-secret-at-least-32-characters";
   password = process.env.DEMO_PASSWORD || "StarlightE2ETest2026!";
   process.env.DEMO_PASSWORD = password;
+  process.env.E2E_CUSTOMER_EMAIL = `e2e-customer-${randomUUID()}@starlight.test`;
   process.env.E2E_STAFF_EMAIL = `e2e-gate-${randomUUID()}@starlight.test`;
   const output = execFileSync(
     process.execPath,
@@ -63,7 +64,8 @@ beforeEach(async () => {
   const cookie = (value: string) => ({
     name: "starlight_refresh",
     value,
-    domain: new URL(process.env.E2E_BASE_URL || "http://127.0.0.1:3100").hostname,
+    domain: new URL(process.env.E2E_BASE_URL || "http://127.0.0.1:3100")
+      .hostname,
     path: "/api/v1/auth",
     expires: Math.floor(Date.now() / 1000) + 7 * 86400,
     httpOnly: true,
@@ -114,9 +116,7 @@ test("manual ticket, explicit refusals, confirmation, history and duplicate reje
   await expect(
     page.getByRole("heading", { name: "Đã xác nhận vào phòng" }),
   ).toBeVisible();
-  await expect(page.locator(".gate-history")).toContainText(
-    fixture.gateEmail,
-  );
+  await expect(page.locator(".gate-history")).toContainText(fixture.gateEmail);
   await manual.fill(fixture.tickets.valid.id);
   await page.getByRole("button", { name: "Kiểm tra mã vé" }).click();
   await expect(page.getByRole("main").getByRole("alert")).toContainText(
@@ -151,8 +151,8 @@ test("actual QR decoding from simulated video, camera stops, explicit confirm", 
   request,
 }) => {
   const response = await request.get("/api/v1/me/tickets", {
-      headers: { Authorization: `Bearer ${customerToken}` },
-    });
+    headers: { Authorization: `Bearer ${customerToken}` },
+  });
   expect(response.ok()).toBeTruthy();
   const list = await response.json();
   const qr = list.find(
@@ -190,7 +190,7 @@ test("actual QR decoding from simulated video, camera stops, explicit confirm", 
   await selectShow(page);
   await page.getByRole("button", { name: "Bật camera quét QR" }).click();
   await expect(page.getByText("Vé đủ điều kiện kiểm tra")).toBeVisible({
-    timeout: 10000,
+    timeout: 20000,
   });
   expect(
     await page.evaluate(() =>

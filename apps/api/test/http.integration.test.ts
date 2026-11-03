@@ -10,8 +10,6 @@ config({ path: "../../.env", quiet: true });
 const testUrl = process.env.TEST_DATABASE_URL!;
 if (!testUrl || !new URL(testUrl).pathname.endsWith("/starlight_test"))
   throw new Error("TEST_DATABASE_URL must point to starlight_test");
-if (new URL(testUrl).port !== "54329")
-  throw new Error("HTTP integration tests require isolated test PostgreSQL on port 54329");
 process.env.DATABASE_URL = testUrl;
 
 let app: import("@nestjs/common").INestApplication;
@@ -24,7 +22,9 @@ const origin = process.env.WEB_ORIGIN!;
 beforeAll(async () => {
   const { AppModule } = await import("../src/app");
   const { ApiErrors } = await import("../src/http");
-  const module = await Test.createTestingModule({ imports: [AppModule] }).compile();
+  const module = await Test.createTestingModule({
+    imports: [AppModule],
+  }).compile();
   app = module.createNestApplication();
   app.setGlobalPrefix("api/v1");
   app.use(cookieParser());

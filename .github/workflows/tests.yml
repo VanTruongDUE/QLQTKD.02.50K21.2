@@ -21,6 +21,11 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      mailpit:
+        image: axllent/mailpit:v1.27
+        ports:
+          - 1025:1025
+          - 8025:8025
     env:
       NODE_ENV: test
       DATABASE_URL: postgresql://starlight:starlight_test@127.0.0.1:54329/starlight_test
@@ -30,6 +35,8 @@ jobs:
       WEB_ORIGIN: http://127.0.0.1:3000
       PAYMENT_MODE: mock
       SMTP_FROM: Starlight CI <tickets@starlight.test>
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: 1025
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -92,4 +99,3 @@ jobs:
       - name: Stop isolated E2E stack
         if: always()
         run: pnpm test:e2e:down
-

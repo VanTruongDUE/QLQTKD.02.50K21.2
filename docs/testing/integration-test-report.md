@@ -1,6 +1,28 @@
 # Báo Cáo Kết Quả Kiểm Thử Tích Hợp (Integration Test Report)
 # STARLIGHT CINEMA – TP3 EVIDENCE
 
+## Sửa lỗi fixture GitHub Actions — 03/11/2026
+
+### Root cause
+
+Các test files dùng chung `starlight_test`. `operations.test.ts` tạo và commit phim của riêng nó. Sau đó `booking.test.ts` gọi fixture `seed()`, nhưng fixture chỉ kiểm tra `SELECT id FROM movies LIMIT 1`; nếu có bất kỳ phim nào thì bỏ qua toàn bộ việc tạo cinema, user và dữ liệu seed còn lại. Log `Seed already exists; no existing data changed` chỉ thể hiện nhánh thoát đó, không xác nhận fixture bắt buộc đã tồn tại. Booking tiếp tục truy vấn hai email demo rồi đọc `.id` từ `undefined`. Fixture check-in cũng gọi `seed()`, sau đó tìm đúng tên cinema demo và truy vấn gate staff; các kết quả rỗng dẫn đến lỗi khi đọc `cinema.id` lúc gán nhân viên. Local từng qua khi DB đã có sẵn toàn bộ dữ liệu demo. Migration chỉ tạo schema, không seed các tài khoản và rạp này.
+
+### Thay đổi
+
+- `booking.test.ts` nay tự tạo hai CUSTOMER, hai STAFF, cinema, phim, auditorium, showtime và ghế của suite với email UUID duy nhất; không gọi demo seed hay tra cứu tài khoản demo.
+- `seed-check-in.ts` nay tạo cinema/phim và CUSTOMER, STAFF, MANAGER riêng cho mỗi fixture, gán gate vào cinema vừa tạo và trả email fixture cho test. Playwright cấp email riêng cho customer/staff; kiểm tra session E2E dùng đúng customer được tạo.
+- Bỏ ràng buộc test HTTP phải dùng cổng `54329`; vẫn bắt buộc tên database `starlight_test`, để có thể chạy an toàn trên PostgreSQL test cô lập ở cổng khác.
+- Job `quality` có Mailpit và cấu hình SMTP test vì booking suite thực sự gửi thư vào Mailpit để kiểm tra worker.
+
+### Xác minh sau sửa
+
+- PostgreSQL 17 test mới trên Docker, database `starlight_test`, tmpfs ở cổng `54330`; migration chạy từ trạng thái trắng, không chạy seed runtime và không đụng DB phát triển `54329`.
+- Chạy riêng `booking.test.ts` + `check-in.test.ts`: **40/40 qua** trên DB mới; chạy lại hai suite trên cùng DB: **40/40 qua**, không lỗi duplicate.
+- `pnpm test:coverage`: **80/80 qua**, 7 test files từ DB sạch; thứ tự thực tế chạy suite operations trước booking nên đã tái hiện điều kiện trước đây khiến demo seed bỏ qua fixture. Coverage: statements/lines 75.03%, branches 75.65%, functions 75.00%. Không có test bị skip do setup.
+- `pnpm test:e2e`: **11/11 qua** (Chromium desktop và mobile giả lập), gồm luồng đặt vé và check-in QR.
+- `pnpm typecheck`, `pnpm lint`, Prettier check và `docker compose -f compose.test.yaml config --quiet` đều qua. Lint còn 2 cảnh báo unused parameter cũ trong frontend.
+- Workflow đã được kiểm tra tĩnh, chưa được chạy từ GitHub; cần push/PR để GitHub Actions xác nhận trực tiếp.
+
 ## Cập nhật bộ kiểm thử tự động — 03/11/2026
 
 ### Môi trường và lệnh đã chạy
@@ -10,7 +32,7 @@ Các bài browser chạy trên stack riêng `compose.test.yaml`: PostgreSQL `sta
 | Lệnh | Kết quả thực tế |
 | --- | --- |
 | `pnpm test:coverage` | **80/80** qua, 7 file; statements/lines 75.08%, branches 75.76%, functions 75.00% |
-| `pnpm test:e2e` | **11/11** qua trong 53.1 giây: workflow đặt vé + QR, đăng nhập/role quản lý, check-in; Chromium desktop và mobile giả lập |
+| `pnpm test:e2e` | **11/11** qua trong 46.7 giây: workflow đặt vé + QR, đăng nhập/role quản lý, check-in; Chromium desktop và mobile giả lập |
 | `pnpm typecheck` | Qua cho contracts, API và web |
 | `pnpm lint` | Exit 0; còn 2 cảnh báo unused parameter trong `step4-checkout.tsx` và `booking-wizard.tsx` |
 | `pnpm build` | Qua; Nest API và Next.js production build, có `/manager/accounts` và `/staff/check-in` |
